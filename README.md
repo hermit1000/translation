@@ -1,145 +1,178 @@
-# Translation Toolkit
+# 한국어 게임 번역 도구
 
-A modern Python package for reverse engineering and translating Japanese video games into Korean.
+일본어 고전 게임의 스크립트와 이미지를 추출하고, 한국어로 번역한 뒤 게임
+바이너리에 다시 기록하는 Python 도구 모음입니다.
 
-## Features
-- **Script Extraction**: Extract Japanese text from binary files with font table support.
-- **Script Injection**: Inject translated Korean text back into game binaries.
-- **Font Management**: Handle custom font tables (.tbl, .json) and font image generation.
-- **Encoding Support**: Built-in support for common encoding/decoding schemes (e.g., XOR).
-- **Name Database**: Manage character names for consistent translation.
+주요 기능은 다음과 같습니다.
 
-## Installation
+- 게임 바이너리에서 일본어 스크립트 추출
+- 번역한 한국어 스크립트를 원본 주소에 기록
+- PC-98 및 DOS 게임 이미지 디코딩·인코딩
+- 게임별 폰트 테이블과 압축 형식 처리
+- 인명·지명·아이템 표기를 통일하기 위한 데이터베이스 제공
 
-### Requirements
-- Python 3.9+
+## 시작하기 전에
 
-### Setup
-1. Clone the repository:
-   ```bash
-   git clone git@github:ybaik/translation.git
-   cd translation
-   ```
+이 저장소에는 변환 도구와 공용 데이터가 들어 있습니다. 실제 게임 파일과
+번역 작업물은 저장소 옆의 별도 `workspace<N>` 디렉터리에 둡니다.
 
-2. Install the package and development dependencies:
-   ```bash
-   python -m pip install -e ".[dev]"
-   ```
+```text
+상위 디렉터리/
+├── translation/       이 저장소
+└── workspace1/        게임 파일과 번역 작업물
+```
 
-3. Install the Git pre-commit hook:
-   ```bash
-   python -m pre_commit install --install-hooks
-   ```
+자동화 스크립트를 실행하기 전에 각 스크립트의 `main()` 함수 상단에서 다음
+값을 작업 대상에 맞게 설정해야 합니다.
 
-   Run both commands in the same Python environment and shell used for
-   `git commit`. For example, if commits are created from Windows Git Bash,
-   install the hook from Windows Git Bash rather than WSL.
+- `ws_num`: workspace 번호(예: `1` → `workspace1`)
+- `platform`: 대상 플랫폼(`pc98` 또는 `dos`)
 
-4. Verify the hook:
-   ```bash
-   python -m pre_commit run --all-files
-   ```
+Python 3.9 이상이 필요합니다.
 
-This installs the runtime dependencies (`fonttools`, `numpy`, `pillow`,
-`opencv-python`, and `rich`) and development tools (`pytest`, `ruff`, and
-`pre-commit`).
+## 빠른 시작
 
-To install only the package and runtime dependencies:
+### 1. 도구 설치
+
 ```bash
+git clone git@github:ybaik/translation.git
+cd translation
 python -m pip install -e .
 ```
 
-## Usage
+### 2. 원본 게임 파일 준비
 
-The automation scripts use a workspace next to this repository. Before
-running them, read [Workspace structure](doc/workspace_structure.md) and set
-the target `ws_num` and `platform` values near the top of each script's
-`main()` function.
-
-Typical text workflow:
+원본 게임 바이너리를 상대 경로를 유지한 채 다음 위치에 배치합니다.
 
 ```text
-jpn-<platform>/
-  -> extract_script_auto.py
-script_init-<platform>/
-  -> select files and create translations
-script-<platform>/
-  -> write_script_auto.py
-kor-<platform>/
+workspace<N>/jpn-<platform>/
 ```
 
-### 1. Prepare the workspace
+예를 들어 PC-98용 `workspace1`이라면 다음과 같습니다.
 
-Place the original game binaries under
-`workspace<N>/jpn-<platform>/`, preserving their relative paths. Configure
-`ws_num` and `platform` in `extract_script_auto.py` for that workspace.
+```text
+workspace1/jpn-pc98/
+```
 
-### 2. Extract the initial scripts
+### 3. 일본어 스크립트 추출
+
+`extract_script_auto.py`의 `ws_num`과 `platform`을 설정한 뒤 실행합니다.
 
 ```bash
 python extract_script_auto.py
 ```
 
-The extracted `*_jpn.json` files are written to
-`script_init-<platform>/`. This directory is a regenerable extraction result,
-not the translation workspace.
+추출 결과는 `workspace<N>/script_init-<platform>/`에 생성됩니다.
 
-### 3. Select and translate scripts
+### 4. 번역 파일 만들기
 
-Copy the files being translated from `script_init-<platform>/` to
-`script-<platform>/`, preserving their relative paths. Keep the Japanese
-`*_jpn.json` file and create a paired `*_kor.json` file.
+번역할 `*_jpn.json` 파일을 상대 경로 그대로 `script-<platform>/`에 복사하고,
+같은 위치에 짝이 되는 `*_kor.json` 파일을 만듭니다.
 
-Translation must preserve address ranges, byte lengths, control codes, and
-supported characters. Follow the
-[translation strategy and validation rules](doc/translation_strategy.md)
-before writing translated data.
+```text
+script-pc98/
+├── FILE.DAT_jpn.json   일본어 원문과 주소 정보
+└── FILE.DAT_kor.json   한국어 번역문
+```
 
-Place script-specific mapping files in `script-<platform>/`:
+번역문은 원본 주소의 바이트 길이, 제어 코드와 지원 문자를 정확히 지켜야
+합니다. 실제 번역을 시작하기 전에
+[번역 지침과 검증 규칙](doc/translation_strategy.md)을 반드시 확인하세요.
 
-- `custom_char.json`: character-code overrides shared by source and output
-  font tables.
-- `custom_word.json`: Korean byte substitutions and custom one-byte
-  sequences.
+### 5. 한국어 바이너리 생성
 
-### 4. Build the translated binaries
-
-Configure the same `ws_num` and `platform` in `write_script_auto.py`, then
-run:
+`write_script_auto.py`에도 같은 `ws_num`과 `platform`을 설정한 뒤 실행합니다.
 
 ```bash
 python write_script_auto.py
 ```
 
-The script reads the original files from `jpn-<platform>/`, applies the
-paired files under `script-<platform>/`, and writes results to
-`kor-<platform>/`. Binary replacement assets referenced by script metadata
-must be placed under `binary_inputs-<platform>/`.
+완성된 파일은 `workspace<N>/kor-<platform>/`에 생성됩니다. 빌드할 때마다
+`jpn-<platform>/`의 원본을 기준으로 하므로, `kor-<platform>/`의 결과물을
+다음 빌드의 원본으로 사용하지 마세요.
 
-Do not treat output under `kor-<platform>/` as the source of later builds;
-each build starts from the original files under `jpn-<platform>/`.
+## 전체 작업 흐름
 
-### 5. Convert game images
+```text
+jpn-<platform>/
+  원본 게임 바이너리
+       ↓ extract_script_auto.py
+script_init-<platform>/
+  자동 추출된 일본어 JSON
+       ↓ 번역 대상 선별
+script-<platform>/
+  *_jpn.json + *_kor.json
+       ↓ write_script_auto.py
+kor-<platform>/
+  한국어가 기록된 게임 바이너리
+```
 
-Image work uses `image-pc98/` and `image-dos/` independently. Naming,
-metadata, decode/encode stages, palette requirements, and supported formats
-are documented in [Image conversion](doc/image_conversion.md).
+`script_init-<platform>/`은 다시 생성할 수 있는 초기 추출 결과이고,
+`script-<platform>/`이 실제 번역 작업 공간입니다.
 
-## Documentation
+스크립트별 추가 매핑이 필요하면 다음 파일을 `script-<platform>/`에 둡니다.
 
-- [Workspace structure and generated files](doc/workspace_structure.md)
-- [Translation strategy and validation rules](doc/translation_strategy.md)
-- [Image conversion workflow and formats](doc/image_conversion.md)
+- `custom_char.json`: 원본과 출력 폰트 테이블이 공유하는 문자 코드 재정의
+- `custom_word.json`: 한국어 바이트 치환 및 사용자 정의 1바이트 시퀀스
 
-## Project Structure
+스크립트 메타데이터에서 참조하는 이미지나 압축 블록 등의 교체 자료는
+`binary_inputs-<platform>/`에 둡니다.
 
-- `module/`: Core script, font-table, compression, and image codecs.
-- `gspecific/`: Game-specific codecs and conversion tools.
-- `tools*/`: Analysis, editing, font, image, and validation utilities.
-- `font_table/`: Shared Japanese and Korean character tables.
-- `name_db/`: Character, region, and item name databases.
-- `tests/`: Automated codec and database tests.
-- `doc/`: Workspace, translation, and image workflow documentation.
+디렉터리별 역할과 생성물에 관한 자세한 내용은
+[Workspace 구조](doc/workspace_structure.md)를 참고하세요.
 
-## License
+## 이미지 번역
+
+이미지 작업 자료는 플랫폼별로 분리합니다.
+
+```text
+PC-98: image-pc98/
+DOS:   image-dos/
+```
+
+두 플랫폼의 중간 파일은 서로 공유하지 않습니다. 이미지 파일명, 메타데이터,
+디코딩·인코딩 단계, 팔레트와 지원 형식은
+[이미지 변환 과정과 형식](doc/image_conversion.md)을 참고하세요.
+
+## 개발 환경 설정
+
+코드를 수정하거나 저장소 개발에 참여하려면 개발용 의존성을 설치합니다.
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+이 명령은 실행 의존성(`fonttools`, `numpy`, `pillow`, `opencv-python`, `rich`)과
+개발 도구(`pytest`, `ruff`, `pre-commit`)를 함께 설치합니다.
+
+Git pre-commit 훅을 설치하고 검사하려면 다음 명령을 실행합니다.
+
+```bash
+python -m pre_commit install --install-hooks
+python -m pre_commit run --all-files
+```
+
+`git commit`에 사용하는 것과 같은 Python 환경 및 셸에서 훅을 설치해야
+합니다. 예를 들어 Windows Git Bash에서 커밋한다면 WSL이 아닌 Windows Git
+Bash에서 설치하세요.
+
+## 프로젝트 구조
+
+- `module/`: 핵심 스크립트, 폰트 테이블, 압축 및 이미지 코덱
+- `gspecific/`: 게임별 코덱과 변환 도구
+- `tools*/`: 분석, 편집, 폰트, 이미지 및 검증 도구
+- `font_table/`: 공용 일본어·한국어 문자 테이블
+- `name_db/`: 인명, 지역 및 아이템 이름 데이터베이스
+- `tests/`: 코덱과 데이터베이스 자동화 테스트
+- `doc/`: Workspace, 번역 및 이미지 작업 흐름 문서
+
+## 상세 문서
+
+- [Workspace 구조와 생성 파일](doc/workspace_structure.md)
+- [번역 지침과 검증 규칙](doc/translation_strategy.md)
+- [이미지 변환 과정과 형식](doc/image_conversion.md)
+- [일본 인명 한글 표기 규칙](doc/japanese_name_translation_rules.md)
+
+## 라이선스
+
 MIT License
