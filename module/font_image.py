@@ -75,7 +75,10 @@ def return_img_roi_1byte(code_hex: str, debug=False) -> Tuple[int, int, int, int
     # xpos = col * 8
 
     col = 20
-    row = code - 128  # 32
+    if code < 0x80:
+        col = 18
+
+    row = code if code < 0x80 else code - 128
 
     # Set a patch ROI
     if debug:

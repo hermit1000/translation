@@ -220,6 +220,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     input_cand.append(["은-는", font_name])
     input_cand.append(["을-를", font_name])
     input_cand.append(["이-가", font_name])
+    input_cand.append(["이-라", font_name])
 
     input_cand.extend([region, font_name] for region in region_4byte)
 

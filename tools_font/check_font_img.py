@@ -3,7 +3,7 @@ import numpy as np
 from PIL import Image
 from pathlib import Path
 from module.font_table import FontTable
-from module.font_image import return_img_roi
+from module.font_image import return_img_roi, return_img_roi_1byte
 
 
 def crop_paste(img_src, img_dst, roi_src, roi_dst):
@@ -13,10 +13,58 @@ def crop_paste(img_src, img_dst, roi_src, roi_dst):
     return img_dst
 
 
+def get_glyphs(script, font_table):
+    """Return (code, width, roi) tuples; ``|`` marks the next char as 1-byte."""
+    glyphs = []
+    half_width = False
+
+    for character in script:
+        if character == "|":
+            if half_width:
+                raise ValueError("A half-width marker cannot follow another marker.")
+            half_width = True
+            continue
+
+        if half_width:
+            code = font_table.get_code_ascii(character)
+            width = 8
+        else:
+            code = font_table.get_code(character)
+            width = 16
+
+        resize_half = False
+        if half_width and code is None:
+            # ASCII punctuation is also present as a 2-byte glyph in the
+            # image table; use it as the source when no dedicated 1-byte
+            # glyph exists.
+            code = font_table.get_code(character)
+            resize_half = True
+
+        if code is None:
+            kind = "half-width" if half_width else "full-width"
+            raise ValueError(f"No {kind} font code for {character!r}.")
+
+        if half_width:
+            if resize_half:
+                roi = return_img_roi(code)
+            else:
+                roi = return_img_roi_1byte(code)
+        else:
+            roi = return_img_roi(code)
+
+        glyphs.append((code, width, roi, resize_half))
+        half_width = False
+
+    if half_width:
+        raise ValueError("The script ends with a half-width marker ('|').")
+
+    return glyphs
+
+
 def main():
     font_out_dir = "c:/work_han/font_update_db/test"
 
-    font_name = "둥근모"  # "둥근모", "비스코"
+    font_name = "비스코"  # "둥근모", "비스코"
     if font_name == "둥근모":
         font_bmp_path = "c:/work_han/ThinDungGeunMo.bmp"
     if font_name == "비스코":
@@ -24,39 +72,25 @@ def main():
 
     img_src = cv2.imread(font_bmp_path, 0)
 
-    script = "히에이산"
+    script = "|(이|)라"
     font_table_kor = FontTable(Path("font_table/font_table-kor-jin.json"))
-    codes = font_table_kor.get_codes(script)
+    glyphs = get_glyphs(script, font_table_kor)
 
-    code = ""
-    for code_hex in codes:
-        code += code_hex
-
-    # val = 0x889F
-    # code = ""
-    # for i in range(4):
-    #     code += f"{val:X}"
-    #     val += 1
-
-    # code = "935791968CB4"
-    # code = code.replace("0x:", "")
-    # code = code.split("#")[0]
-
-    if len(code) % 2 != 0:
-        assert 0, f"The length of code is not matched. {code}"
-
-    num_chars = len(code) // 4
-    canvas = np.zeros((16, num_chars * 16), dtype=np.uint8)
-    for i in range(num_chars):
-        roi = return_img_roi(code[i * 4 : (i + 1) * 4])
+    canvas = np.zeros((16, sum(width for _, width, _, _ in glyphs)), dtype=np.uint8)
+    x = 0
+    for _, width, roi, resize_half in glyphs:
         # ypos = 33 * 16
         # xpos = 2 * 16
         # crop = img_src[ypos : ypos + 16, xpos : xpos + 16]
 
-        canvas[:, 16 * i : 16 * (i + 1)] = img_src[roi[0] : roi[1], roi[2] : roi[3]]
+        glyph = img_src[roi[0] : roi[1], roi[2] : roi[3]]
+        if resize_half:
+            glyph = cv2.resize(glyph, (width, 16), interpolation=cv2.INTER_AREA)
+        canvas[:, x : x + width] = glyph
+        x += width
 
     img_pil = Image.fromarray(canvas).convert("1")
-    img_pil.save(f"{font_out_dir}/{script}.bmp")
+    img_pil.save(f"{font_out_dir}/{script.replace('|', '')}.bmp")
     return
 
     h, w = canvas.shape
