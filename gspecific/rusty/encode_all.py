@@ -12,6 +12,18 @@ from rusty_images import encode_mag, encode_mgx
 
 ROOT = Path(r"C:\work_han\workspace1")
 INPUT_DIR = ROOT / "binary_inputs-pc98"
+MGX_COORDS = {
+    "R_A23.MGX": (19, 128),
+    "R_A31.MGX": (32, 132),
+    "R_A36.MGX": (40, 136),
+    "STAFF1.MGX": (136, 189),
+    "STAFF2.MGX": (152, 144),
+    "STAFF3.MGX": (152, 152),
+    "STAFF4.MGX": (144, 144),
+    "STAFF5.MGX": (136, 176),
+    "STAFF6.MGX": (152, 188),
+    "STAFF7.MGX": (216, 164),
+}
 
 
 def main() -> None:
@@ -24,7 +36,7 @@ def main() -> None:
         if suffix == "mag":
             encode_mag(source, target)
         elif suffix == "mgx":
-            encode_mgx(source, target)
+            encode_mgx(source, target, *MGX_COORDS.get(target.name, (0, 0)))
         else:
             skipped += 1
             print(f"SKIP {source.relative_to(INPUT_DIR)} (unknown original extension)")

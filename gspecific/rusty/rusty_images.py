@@ -98,14 +98,23 @@ def _palette_for(im):
     return pal,{c:i for i,c in enumerate(pal)}
 
 def encode(source:Path,target:Path,x=0,y=0):
-    im=Image.open(source).convert('RGB'); w,hh=im.size; x0=x; x1=x+w-1; left=x0&-4; right=(x1+4)&-4; sw=right-left; pal,lookup=_palette_for(im); words=[]
+    im=Image.open(source).convert('RGB'); w,hh=im.size; x0=x; x1=x+w-1; left=x0&-4; action_len=(x1//8)-(x0//8)+1; sw=action_len*8; pal,lookup=_palette_for(im)
+    pixels=list(im.getdata()); bw=all(max(rgb)-min(rgb)<4 for rgb in pixels); words=[]
     for yy in range(hh):
         for xx in range(0,sw,4):
-            v=0
-            for p in range(4): v=(v<<4)|lookup.get(im.getpixel((min(max(xx+p-(x0-left),0),w-1),yy)),0)
+            if bw:
+                mask=0
+                for p in range(4):
+                    rgb=im.getpixel((min(max(xx+p-(x0-left),0),w-1),yy)); mask=(mask<<1)|(1 if sum(rgb)//3>127 else 0)
+                v=mask*0x1111
+            else:
+                v=0
+                for p in range(4): v=(v<<4)|lookup.get(im.getpixel((min(max(xx+p-(x0-left),0),w-1),yy)),0)
             words.append(v)
-    fas=hh*(sw//8); fa=bytes([255])*fas; fo=0x50; fb=fo+fas; co=fb; out=bytearray(MAGIC+b'\0\0\0\0')+struct.pack('<HHHH',x0,y,x1,y+hh-1)+struct.pack('<IIIII',fo,fb,0,co,len(words)*2)
-    for r,g,b in pal: out+=bytes((g&15,r&15,b&15))
+    fas=(hh*(sw//8)+7)//8; fa=bytes([255])*fas; fo=0x50; fb=fo+fas; co=fb; out=bytearray(MAGIC+b'\0\0\0\0')+struct.pack('<HHHH',x0,y,x1,y+hh-1)+struct.pack('<IIIII',fo,fb,0,co,len(words)*2)
+    if bw: pal=[(0,0,0)]+[(0,0,0)]*14+[(255,255,255)]
+    # MGX palette stores each 4-bit component in both nibbles (00/77/FF).
+    for r,g,b in pal: out+=bytes((((g//17)&15)*0x11,((r//17)&15)*0x11,((b//17)&15)*0x11))
     out+=fa+b''.join(struct.pack('<H',v) for v in words); Path(target).parent.mkdir(parents=True,exist_ok=True); Path(target).write_bytes(out)
     return {'format':'Rusty-MGX','source':Path(source).name,'width':w,'height':hh,'x':x,'y':y}
 
@@ -149,7 +158,7 @@ def encode_mag(source:Path,target:Path):
             for p in range(4): v=(v<<4)|lookup.get(im.getpixel((min(xx+p,w-1),yy)),0)
             words.append(v)
     fo=0x50; fb=fo+len(fa); co=fb; out=bytearray(b'MAKI02A \x1a\0\0\0\0')+struct.pack('<HHHH',0,0,sw-1,hh-1)+struct.pack('<IIIII',fo,fb,0,co,len(words)*2)
-    for r,g,b in pal: out+=bytes((g//17,r//17,b//17))
+    for r,g,b in pal: out+=bytes((((g//17)&15)*0x11,((r//17)&15)*0x11,((b//17)&15)*0x11))
     out+=fa+b''.join(struct.pack('>H',v) for v in words); Path(target).parent.mkdir(parents=True,exist_ok=True); Path(target).write_bytes(out)
     return {'format':'Rusty-MAG','source':Path(source).name,'width':w,'height':hh}
 
