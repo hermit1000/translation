@@ -74,7 +74,7 @@ def decode(source:Path,target:Path,meta_path=None,word_dump=None,trace_path=None
     if len(out)<count: raise ValueError(f'pixel stream ended early ({len(out)}/{count} words)')
     if word_dump: Path(word_dump).parent.mkdir(parents=True,exist_ok=True); Path(word_dump).write_bytes(b''.join(struct.pack('<H',v) for v in out[:count]))
     if trace_path: Path(trace_path).parent.mkdir(parents=True,exist_ok=True); Path(trace_path).write_text(json.dumps(trace,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
-    pal=[(r*17,g*17,b*17,255) for r,g,b in m['palette_4bit']]; pixels=[]; crop=m['x0']-left; nib=_looks_like_nibble_pixels(out)
+    pal=[(r*17,g*17,b*17) for r,g,b in m['palette_4bit']]; pixels=[]; crop=m['x0']-left; nib=_looks_like_nibble_pixels(out)
     for y in range(hh):
         row=out[y*wr:(y+1)*wr]; expanded=[]
         if nib:
@@ -85,7 +85,7 @@ def decode(source:Path,target:Path,meta_path=None,word_dump=None,trace_path=None
                 planes=_sub290_planes(row[i],row[i+1])
                 for bit in range(7,-1,-1): expanded.append(pal[sum(((p>>bit)&1)<<j for j,p in enumerate(planes))])
         pixels.extend(expanded[crop:crop+w])
-    im=Image.new('RGBA',(w,hh)); im.putdata(pixels); Path(target).parent.mkdir(parents=True,exist_ok=True); im.save(target)
+    im=Image.new('RGB',(w,hh)); im.putdata(pixels); Path(target).parent.mkdir(parents=True,exist_ok=True); im.save(target)
     result={'format':'Rusty-MGX','source':Path(source).name,'x':m['x0'],'y':m['y0'],'width':w,'height':hh,'x1':m['x1'],'y1':m['y1'],'palette_4bit_rgb':[list(c) for c in m['palette_4bit']],'pixel_mode':'nibble-bitmask' if nib else 'four-plane'}
     if meta_path: Path(meta_path).parent.mkdir(parents=True,exist_ok=True); Path(meta_path).write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     return result
@@ -120,11 +120,14 @@ def encode(source:Path,target:Path,x=0,y=0):
 
 encode_mgx=encode
 
-def decode_mag(source:Path,target:Path):
+def _decode_mag(source:Path,target:Path,*,dos_palette:bool):
     data=rusty_lz_decode(Path(source).read_bytes()); p=data.find(b'MAKI02');
     if p<0: raise ValueError('MAKI02 signature not found')
     h=data.find(b'\x1a',p+6)+1; x0,y0,x1,y1=struct.unpack_from('<HHHH',data,h+4); fa,fb,fbs,co,csz=struct.unpack_from('<IIIII',data,h+12); x0&=-8; x1|=7; sw=x1-x0+1; hh=y1-y0+1; pal=[]
-    for i in range(16): g,r,b=data[h+32+i*3:h+35+i*3]; pal.append((r*17,g*17,b*17,255))
+    for i in range(16):
+        g,r,b=data[h+32+i*3:h+35+i*3]
+        if dos_palette: g,r,b=g>>4,r>>4,b>>4
+        pal.append((r*17,g*17,b*17))
     actions=bytearray(sw//8); aa=data[h+fa:h+fb]; bb=data[h+fb:h+fb+fbs]; cc=data[h+co:h+co+csz]; out=[]; ai=-1; bi=ci=0; mask=128; target_words=(sw//4)*hh
     for flag in aa:
         for bit in (128,64,32,16,8,4,2,1):
@@ -147,19 +150,43 @@ def decode_mag(source:Path,target:Path):
     pix=[]
     for z in out:
         for sh in (12,8,4,0): pix.append(pal[z>>sh&15])
-    im=Image.new('RGBA',(sw,hh)); im.putdata(pix[:sw*hh]); Path(target).parent.mkdir(parents=True,exist_ok=True); im.save(target)
-    return {'format':'Rusty-MAG','source':Path(source).name,'width':sw,'height':hh,'x':x0,'y':y0,'x1':x1,'y1':y1,'pixel_mode':'four-color-nibble'}
+    im=Image.new('RGB',(sw,hh)); im.putdata(pix[:sw*hh]); Path(target).parent.mkdir(parents=True,exist_ok=True); im.save(target)
+    platform='DOS' if dos_palette else 'PC98'
+    return {'format':f'Rusty-MAG-{platform}','source':Path(source).name,'width':sw,'height':hh,'x':x0,'y':y0,'x1':x1,'y1':y1,'pixel_mode':'four-color-nibble'}
 
-def encode_mag(source:Path,target:Path):
-    im=Image.open(source).convert('RGB'); w,hh=im.size; sw=(w+7)&-8; pal,lookup=_palette_for(im); fa=bytes([255])*((sw//8+7)//8*hh); words=[]
+
+def decode_mag_pc98(source:Path,target:Path):
+    return _decode_mag(source,target,dos_palette=False)
+
+
+def decode_mag_dos(source:Path,target:Path):
+    return _decode_mag(source,target,dos_palette=True)
+
+
+def _encode_mag(source:Path,target:Path,x=0,y=0,*,signature:bytes):
+    im=Image.open(source).convert('RGB'); w,hh=im.size; sw=(w+7)&-8; pal,lookup=_palette_for(im); fa=bytes((sw//8+7)//8*hh); words=[]
     for yy in range(hh):
         for xx in range(0,sw,4):
             v=0
             for p in range(4): v=(v<<4)|lookup.get(im.getpixel((min(xx+p,w-1),yy)),0)
             words.append(v)
-    fo=0x50; fb=fo+len(fa); co=fb; out=bytearray(b'MAKI02A \x1a\0\0\0\0')+struct.pack('<HHHH',0,0,sw-1,hh-1)+struct.pack('<IIIII',fo,fb,0,co,len(words)*2)
+    fo=0x50; fb=fo+len(fa); co=fb; out=bytearray(signature+b'\0\0\0\0')+struct.pack('<HHHH',x,y,x+sw-1,y+hh-1)+struct.pack('<IIIII',fo,fb,0,co,len(words)*2)
     for r,g,b in pal: out+=bytes((((g//17)&15)*0x11,((r//17)&15)*0x11,((b//17)&15)*0x11))
     out+=fa+b''.join(struct.pack('>H',v) for v in words); Path(target).parent.mkdir(parents=True,exist_ok=True); Path(target).write_bytes(out)
-    return {'format':'Rusty-MAG','source':Path(source).name,'width':w,'height':hh}
+    return {'source':Path(source).name,'width':w,'height':hh,'x':x,'y':y}
 
-__all__=['decode_mag','decode_mgx','encode_mag','encode_mgx','read_mgx_header','rusty_lz_decode']
+
+def encode_mag_pc98(source:Path,target:Path,x=0,y=0):
+    result=_encode_mag(source,target,x,y,signature=b'MAKI02A \x1a')
+    return {'format':'Rusty-MAG-PC98',**result}
+
+
+def encode_mag_dos(source:Path,target:Path,x=0,y=0):
+    result=_encode_mag(source,target,x,y,signature=b'MAKI02  \x1a')
+    return {'format':'Rusty-MAG-DOS',**result}
+
+
+decode_mag=decode_mag_pc98
+encode_mag=encode_mag_pc98
+
+__all__=['decode_mag','decode_mag_pc98','decode_mag_dos','decode_mgx','encode_mag','encode_mag_pc98','encode_mag_dos','encode_mgx','read_mgx_header','rusty_lz_decode']

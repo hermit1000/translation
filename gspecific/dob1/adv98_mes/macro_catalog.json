@@ -1,0 +1,26 @@
+{
+  "format": "dob1-adv98-macro-catalog-v1",
+  "slot_count": 20,
+  "macros": {
+    "00": {"name": "SPEAKER_COLE", "category": "speaker", "original": "\u30B3\u30FC\u30EB:", "translation": "\uCF5C:"},
+    "01": {"name": "SPEAKER_COUGAR", "category": "speaker", "original": "\u30AF\u30FC\u30AC\u30FC\uFF1A", "translation": "\uCFE0\uAC70:"},
+    "02": {"name": "SPEAKER_JACK", "category": "speaker", "original": "\u30B8\u30E3\u30C3\u30AF:", "translation": "\uC7B0:"},
+    "03": {"name": "MESSAGE_UI_SETUP", "category": "control", "translation": null},
+    "04": {"name": "SPEAKER_KEEL", "category": "speaker", "original": "\u30AD\u30FC\u30EB:", "translation": "\uD0AC:"},
+    "05": {"name": "SPEAKER_GHOUL", "category": "speaker", "original": "\u30B0\u30FC\u30EB:", "translation": "\uAD6C\uC6B8:"},
+    "06": {"name": "SPEAKER_NOSE", "category": "speaker", "original": "\u30CE\u30FC\u30BA:", "translation": "\uB178\uC988:"},
+    "07": {"name": "SPEAKER_RAY", "category": "speaker", "original": "\u30EC\u30A4:", "translation": "\uB808\uC774:"},
+    "08": {"name": "SPEAKER_CAIN", "category": "speaker", "original": "\u30B1\u30A4\u30F3:", "translation": "\uCF00\uC778:"},
+    "09": {"name": "SPEAKER_SALLY", "category": "speaker", "original": "\u30B5\u30EA\u30FC:", "translation": "\uC0D0\uB9AC:"},
+    "0A": {"name": "SPEAKER_CATHY", "category": "speaker", "original": "\u30AD\u30E3\u30C3\u30B7\u30FC:", "translation": "\uCE90\uC2DC:"},
+    "0B": {"name": "SPEAKER_MAN_A", "category": "speaker", "original": "\u7537\u3000\uFF21:", "translation": "\uB0A8\uC790A:"},
+    "0C": {"name": "SPEAKER_MAN_B", "category": "speaker", "original": "\u7537\u3000\uFF22:", "translation": "\uB0A8\uC790B:"},
+    "0D": {"name": "PUNCT_COMMA", "category": "punctuation", "original": "\u3001", "translation": ","},
+    "0E": {"name": "PUNCT_TWO_DOTS", "category": "punctuation", "original": "\u2025", "translation": "\u2025"},
+    "0F": {"name": "PUNCT_PERIOD", "category": "punctuation", "original": "\u3002", "translation": "."},
+    "10": {"name": "FULLWIDTH_SPACE", "category": "spacing", "translation": " "},
+    "11": {"name": "PUNCT_EXCLAMATION", "category": "punctuation", "translation": "!"},
+    "12": {"name": "PUNCT_QUESTION", "category": "punctuation", "translation": "?"},
+    "13": {"name": "CONTROL_A5", "category": "control", "translation": null}
+  }
+}

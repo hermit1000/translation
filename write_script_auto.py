@@ -30,8 +30,8 @@ def load_custom_words(script_base_dir: Path, language: str) -> dict:
 
 def main():
     platform = "dos"
-    platform = "pc98"
-    ws_num = 5
+    # platform = "pc98"
+    ws_num = 1
     tag = ""
     copy_subdir = ""
     # tag = "-384k"
@@ -75,9 +75,9 @@ def main():
         if "_kor.json" not in file.name:
             continue
 
-        # if "STR2" not in file.name:
-        #     continue
         # if "MAIN.EXE" not in file.name:
+        #     continue
+        # if "BGSET.EXE" not in file.name:
         #     continue
 
         org_fn = file.name.replace("_kor.json", "")
