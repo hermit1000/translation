@@ -8,6 +8,57 @@
   "OPEN_2.MES": {
     "02": {"original": "ジャック:", "translation": "잭:"}
   },
+  "000067.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "13PLUS.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "17PLUS.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "000012.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "000013.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "000014.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "000015.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "000017.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "000018.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "000019.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "000027.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "000052.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "000060.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "000061.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "000062.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "000064.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
+  "000065.MES": {
+    "02": {"original": "シーラ:", "translation": "실라:"}
+  },
   "000002.MES": {
     "02": {"original": "シーラ:", "translation": "실라:"}
   },

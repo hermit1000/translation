@@ -4,7 +4,7 @@
   "macros": {
     "00": {"name": "SPEAKER_COLE", "category": "speaker", "original": "\u30B3\u30FC\u30EB:", "translation": "\uCF5C:"},
     "01": {"name": "SPEAKER_COUGAR", "category": "speaker", "original": "\u30AF\u30FC\u30AC\u30FC\uFF1A", "translation": "\uCFE0\uAC70:"},
-    "02": {"name": "SPEAKER_JACK", "category": "speaker", "original": "\u30B8\u30E3\u30C3\u30AF:", "translation": "\uC7B0:"},
+    "02": {"name": "SPEAKER_SHEILA", "category": "speaker", "original": "\u30B7\u30FC\u30E9:", "translation": "\uC2E4\uB77C:"},
     "03": {"name": "MESSAGE_UI_SETUP", "category": "control", "translation": null},
     "04": {"name": "SPEAKER_KEEL", "category": "speaker", "original": "\u30AD\u30FC\u30EB:", "translation": "\uD0AC:"},
     "05": {"name": "SPEAKER_GHOUL", "category": "speaker", "original": "\u30B0\u30FC\u30EB:", "translation": "\uAD6C\uC6B8:"},

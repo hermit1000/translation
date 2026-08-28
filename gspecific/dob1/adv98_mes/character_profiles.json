@@ -22,8 +22,7 @@
       "notes": "콜에게 친근하게 말하지만 나이 든 남성다운 어투를 유지한다."
     },
     "02": {
-      "macro_name": "SPEAKER_JACK",
-      "display_name_override": "잭",
+      "macro_name": "SPEAKER_SHEILA",
       "display_name": "실라",
       "status": "provisional",
       "speech_style": null,

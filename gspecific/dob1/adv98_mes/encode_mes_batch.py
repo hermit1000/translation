@@ -6,7 +6,10 @@ from rich.console import Console
 from rich.table import Table
 from pathlib import Path
 from typing import Any
-from .translation_codec import encode_translation, load_font_codes
+try:
+    from .translation_codec import encode_translation, load_font_codes
+except ImportError:
+    from translation_codec import encode_translation, load_font_codes
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -15,6 +18,7 @@ except (AttributeError, ValueError):
 
 PUNCT = {"0D": ",", "0E": "‥", "0F": ".", "10": " ", "11": "!", "12": "?"}
 DISPLAY_LINE_CELLS = 31
+CLOSING_PUNCTUATION = "》〉」』】〕〗〙〛）］)]”’"
 
 def trim_wrap_boundary_spaces(value: str, width: int = DISPLAY_LINE_CELLS) -> str:
     """Remove literal spaces that would be the first blank after a full line."""
@@ -29,7 +33,8 @@ def trim_wrap_boundary_spaces(value: str, width: int = DISPLAY_LINE_CELLS) -> st
             head, body_tail = body[:leading.end()], body[leading.end():]
         else:
             head, body_tail = '', body
-        body_tail = re.sub(r'((?:\{‥\})+)(?=[^{}\s])', r'\1 ', body_tail)
+        next_text = r'(?=[^{}\s' + re.escape(CLOSING_PUNCTUATION) + r'])'
+        body_tail = re.sub(r'((?:\{‥\})+)' + next_text, r'\1 ', body_tail)
         value = prefix + head + body_tail
     out: list[str] = []
     cells = 0
@@ -47,12 +52,14 @@ def trim_wrap_boundary_spaces(value: str, width: int = DISPLAY_LINE_CELLS) -> st
             i = end + 1
             continue
         ch = value[i]
+        if ch == "|":
+            # Editing-only separator; it has no display-cell width.
+            out.append(ch)
+            i += 1
+            continue
         # ADV98 wraps at the editable positions 31, 61, ... (1-based).
-        # Since ``cells`` is zero-based, those positions are multiples of
-        # ``width - 1``.  Remove only those spaces; positions 32, 62 and 63
-        # are valid and must not be treated as boundary errors.  The counter
-        # advances only for retained characters, so deleting a space causes
-        # the next boundary to be recalculated automatically.
+        # Remove a literal space that would occupy the first cell after a
+        # completed line, preserving the original boundary behavior.
         if ch == " " and cells > 0 and cells % (width - 1) == 0:
             i += 1
             continue
@@ -117,7 +124,13 @@ def split_by_info_segments(value: str, meta: dict[str, Any], records: list[dict[
     # their original order.
     if "|" in value:
         tokens = list(re.finditer(r"\{[^{}]*\}|\|", value))
-        macro_tokens = [m for m in tokens if m.group(0) != "|"]
+        # The first brace token is the speaker label and is not one of the
+        # source macro boundaries.  Exclude it from the macro cursor; keeping
+        # it here shifts every punctuation boundary by one token.
+        macro_tokens = [
+            m for m in tokens
+            if m.group(0) != "|" and m.start() != 0
+        ]
         macro_offsets = sorted((m.get("offset") for m in meta.get("macros", []) if m.get("offset")), key=lambda x: int(x, 16))
         pieces, start_pos, macro_pos, pipe_pos = [], 0, 0, 0
         prev_end = int(text_segments[0].get("end", text_segments[0]["offset"]), 16)
@@ -132,7 +145,9 @@ def split_by_info_segments(value: str, meta: dict[str, Any], records: list[dict[
             else:
                 while pipe_pos < len(tokens) and tokens[pipe_pos].start() < start_pos:
                     pipe_pos += 1
-                if pipe_pos < len(tokens) and tokens[pipe_pos].group(0) == "|":
+                while pipe_pos < len(tokens) and tokens[pipe_pos].group(0) != "|":
+                    pipe_pos += 1
+                if pipe_pos < len(tokens):
                     cut = tokens[pipe_pos].start()
                     pipe_pos += 1
             if cut is None:
@@ -155,6 +170,11 @@ def split_by_info_segments(value: str, meta: dict[str, Any], records: list[dict[
         if preceding:
             boundaries.append(len(preceding) - 1)
     matches = list(re.finditer(r"\{[^{}]*\}", value))
+    # The leading speaker marker is not a punctuation boundary.  Exclude it
+    # from the marker index list while retaining it in the first slice (it is
+    # removed by the brace-stripping below).
+    if matches and matches[0].start() == 0:
+        matches = matches[1:]
     cuts = [matches[index].end() for index in boundaries if index < len(matches)]
     parts, start_pos = [], 0
     for cut in cuts:
@@ -181,6 +201,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("workspace", nargs="?", type=Path, default=Path(r"C:\work_han\workspace2"))
     ap.add_argument("--no-dosbox-x", action="store_true")
+    ap.add_argument("--debug-offset", help="trace one source offset in 000046.MES")
     a = ap.parse_args(); root=a.workspace.resolve(); d=root/'script-pc98'/'MES'
     console = Console(); results = []
     font_path = Path(__file__).resolve().parents[3] / "font_table" / "font_table-kor-jin.json"
@@ -196,6 +217,11 @@ def main() -> int:
         groups=lang.get('dialogue_groups', [])
         overlays = lang.get('overlay_texts', [])
         invalid_offsets = set()
+        dialogue_ranges = [
+            (int(segment['offset'], 16), int(segment['end'], 16))
+            for dialogue in info.get('dialogues', [])
+            for segment in dialogue.get('segments', [])
+        ]
 
         # Overlay text is emitted by ADV98 screen/control routines rather
         # than the dialogue-window speaker flow.  Keep it in a separate
@@ -204,6 +230,22 @@ def main() -> int:
         for overlay in overlays:
             offset = overlay.get('offset')
             index = by_offset.get(offset)
+            overlay_start = int(offset, 16) if offset else None
+            overlay_end = (
+                int(records[index].get('end', offset), 16)
+                if index is not None and offset
+                else overlay_start
+            )
+            if overlay_start is not None and any(
+                start <= overlay_end and overlay_start <= end
+                for start, end in dialogue_ranges
+            ):
+                # Older info files sometimes merged a newly recovered text
+                # record into an existing dialogue segment.  The overlay is
+                # then only a diagnostic alias; replacing it separately would
+                # create overlapping byte ranges.
+                overlay['status'] = 'passed: covered by dialogue segment'
+                continue
             if index is None or records[index].get('type') != 'text':
                 overlay['status'] = f'error: unknown overlay record {offset}'
                 continue
@@ -236,6 +278,14 @@ def main() -> int:
             normalized_translation = trim_wrap_boundary_spaces(normalized_translation)
             original_markers = re.findall(r'\{([^{}]*)\}', group.get('original', ''))
             translation_markers = re.findall(r'\{([^{}]*)\}', normalized_translation)
+            japanese_marker = next((
+                marker for marker in translation_markers
+                if re.search(r'[ぁ-んァ-ヶ一-龯々〆ヵヶ、。・「」『』〈〉《》【】〔〕]', marker)
+            ), None)
+            if japanese_marker is not None:
+                print(f"ERROR {stem} {group.get('id')}: Japanese text/code remains in marker ({{{japanese_marker}}})")
+                group["status"] = f"error: Japanese text/code remains in marker ({{{japanese_marker}}})"
+                continue
             if re.search(r'\{[.!?]\}[ \t]+$', normalized_translation):
                 group["status"] = "error: trailing space after sentence-ending macro"
                 print(f"ERROR {stem} {group.get('id')}: trailing space after sentence-ending macro")
@@ -268,7 +318,15 @@ def main() -> int:
             full_value = value
             markers = re.findall(r'\{([^{}]*)\}', full_value)
             if markers:
-                parts = split_by_info_segments(full_value, meta or {}, records, by_offset)
+                # Keep editing-only pipes while determining source-segment
+                # boundaries.  They are removed from ``normalized_translation``
+                # only for final cell-length validation/encoding; deleting
+                # them here would merge adjacent records and drop later text.
+                # Apply wrap-boundary normalization to the same value used
+                # for segment splitting; otherwise a removed 31/61-space
+                # could be reintroduced from the unnormalized source string.
+                split_translation = trim_wrap_boundary_spaces(source_translation)
+                parts = split_by_info_segments(split_translation, meta or {}, records, by_offset)
                 for n, idx in enumerate(text_ids):
                     records[idx]['translation'] = parts[n] if n < len(parts) else ''
                 punct_markers = [m for m in markers if m in {',', '.', '?', '!', '‥', ' ' }]
@@ -335,12 +393,27 @@ def main() -> int:
         lang_path.write_text(json.dumps(lang, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         dialogue_offsets = {s['offset'] for d in info.get('dialogues', []) for s in d.get('segments', [])}
         overlay_offsets = {o.get('offset') for o in overlays if o.get('offset')}
-        total = sum(1 for r in records if r.get('type') == 'text' and r.get('offset') not in invalid_offsets and (not dialogue_offsets or r.get('offset') in dialogue_offsets or r.get('offset') in overlay_offsets))
-        translated = sum(1 for r in records if r.get('type') == 'text' and r.get('offset') not in invalid_offsets and (not dialogue_offsets or r.get('offset') in dialogue_offsets or r.get('offset') in overlay_offsets) and (r.get('translation') not in (None, r.get('original')) or is_structural_literal(r.get('translation') or r.get('original', ''))))
+        # The decoder can emit the same text range twice when both compressed
+        # and Shift-JIS interpretations are valid.  It is one display cell,
+        # so count each (offset,end) range once in coverage/status reporting.
+        unique_map = {}
+        for r in records:
+            key = (r.get('offset'), r.get('end'))
+            if r.get('type') != 'text':
+                continue
+            if r.get('offset') in invalid_offsets:
+                continue
+            if dialogue_offsets and r.get('offset') not in dialogue_offsets and r.get('offset') not in overlay_offsets:
+                continue
+            # Keep the last duplicate, matching by_offset's encoding target.
+            unique_map[key] = r
+        unique_text = list(unique_map.values())
+        total = len(unique_text)
+        translated = sum(1 for r in unique_text if r.get('translation') not in (None, r.get('original')) or is_structural_literal(r.get('translation') or r.get('original', '')))
         coverage = (translated / total * 100) if total else 100.0
         if coverage < 100:
             group_by_offset = {s.get("offset"): d.get("id") for d in info.get("dialogues", []) for s in d.get("segments", [])}
-            missing = [r for r in records if r.get("type") == "text" and r.get("offset") in dialogue_offsets and r.get("translation") in (None, r.get("original")) and not is_structural_literal(r.get("translation") or r.get("original", ""))]
+            missing = [r for r in unique_text if r.get("offset") in dialogue_offsets and r.get("translation") in (None, r.get("original")) and not is_structural_literal(r.get("translation") or r.get("original", ""))]
             print(f"INCOMPLETE {stem}: {len(missing)} untranslated segment(s)")
             for record in missing:
                 print(f"  {group_by_offset.get(record.get('offset'), 'unknown')} @ {record.get('offset')}: {record.get('original', '')}")
@@ -357,11 +430,19 @@ def main() -> int:
         else:
             results.append((stem, translated, total, coverage,
                             'ready' if coverage >= 100 else 'incomplete'))
+        # Preserve manually indexed text blocks that are stored only in the
+        # language document (for example ungrouped late-scene records).
+        # encode_mes.py consumes the merged temporary document, so omitting
+        # this field silently leaves those blocks in Japanese.
+        if lang.get('extra_texts'):
+            info['extra_texts'] = lang['extra_texts']
         with tempfile.NamedTemporaryFile('w',suffix='.json',delete=False,encoding='utf-8') as f:
             json.dump(info,f,ensure_ascii=False,indent=2); tmp=f.name
         source=root/'jpn-pc98'/'MES'/stem; output=root/'kor-pc98'/'MES'/stem
         try:
-            subprocess.run([sys.executable,'-m','gspecific.dob1.adv98_mes.encode_mes',str(source),tmp,str(output),'font_table/font_table-kor-jin.json'],check=True)
+            cmd=[sys.executable,'-m','gspecific.dob1.adv98_mes.encode_mes',str(source),tmp,str(output),'font_table/font_table-kor-jin.json']
+            if a.debug_offset and stem == '000046.MES': cmd += ['--debug-offset', a.debug_offset]
+            subprocess.run(cmd,check=True)
         except subprocess.CalledProcessError as exc:
             results[-1] = (stem, translated, total, coverage, 'failed: font/translation')
             continue

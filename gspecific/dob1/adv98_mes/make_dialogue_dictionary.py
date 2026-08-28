@@ -49,21 +49,22 @@ def main() -> int:
         except (OSError, json.JSONDecodeError) as exc:
             console.print(f"ERROR {path.name}: {exc}", style="red")
             continue
-        dialogue_groups = data.get("dialogue_groups") if isinstance(data, dict) else None
-        if not isinstance(dialogue_groups, list):
+        if not isinstance(data, dict):
             continue
         files += 1
         file_groups = 0
         file_translated = 0
-        for group in dialogue_groups:
-            if not isinstance(group, dict):
-                continue
-            groups += 1
-            file_groups += 1
-            if isinstance(group.get("translation"), str) and group["translation"].strip():
-                translated_groups += 1
-                file_translated += 1
-            add_pair(dictionary, group.get("original"), group.get("translation"), f"{path.name}:{group.get('id', '')}")
+        for section in ("dialogue_groups", "overlay_texts"):
+            for group in data.get(section, []):
+                if not isinstance(group, dict):
+                    continue
+                groups += 1
+                file_groups += 1
+                if isinstance(group.get("translation"), str) and group["translation"].strip():
+                    translated_groups += 1
+                    file_translated += 1
+                identifier = group.get("id") or f"overlay:{group.get('offset', '')}"
+                add_pair(dictionary, group.get("original"), group.get("translation"), f"{path.name}:{identifier}")
         file_percent = (file_translated / file_groups * 100) if file_groups else 100.0
         overall_percent = (translated_groups / groups * 100) if groups else 100.0
         console.print(
