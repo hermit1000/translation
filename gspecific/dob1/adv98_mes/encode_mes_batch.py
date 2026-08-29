@@ -436,6 +436,8 @@ def main() -> int:
         # this field silently leaves those blocks in Japanese.
         if lang.get('extra_texts'):
             info['extra_texts'] = lang['extra_texts']
+        if lang.get('credit_layout'):
+            info['credit_layout'] = lang['credit_layout']
         with tempfile.NamedTemporaryFile('w',suffix='.json',delete=False,encoding='utf-8') as f:
             json.dump(info,f,ensure_ascii=False,indent=2); tmp=f.name
         source=root/'jpn-pc98'/'MES'/stem; output=root/'kor-pc98'/'MES'/stem

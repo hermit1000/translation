@@ -183,11 +183,11 @@ def decode_mes(data: bytes) -> list[dict[str, Any]]:
             offset += 1
             continue
 
-        # ADV98 message streams use 0x08/0x0C/0x0D followed by a one-byte parameter
+        # ADV98 message streams use 0x08/0x0C/0x0D/0x19 followed by a one-byte parameter
         # for internal display/control operations.  The parameter often falls
         # in the compressed-SJIS printable range; treating it as text produces
         # bogus trailing kana such as ``ぁ`` or ``っ`` after a sentence.
-        if first in (0x08, 0x0C, 0x0D) and second is not None:
+        if first in (0x08, 0x0C, 0x0D, 0x19) and second is not None:
             result.append(
                 make_token(
                     offset,

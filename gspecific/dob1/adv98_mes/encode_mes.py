@@ -76,10 +76,100 @@ def main() -> int:
                 raise ValueError(f"source mismatch at {start:05X}-{end:05X}")
         replacements.append((start, end, encode_translation(translation, codes)))
 
+    credit_ranges: list[tuple[int, int]] = []
+    if args.source_mes.name.upper() == "000067.MES" and document.get("credit_layout") == "compact-v1":
+        credit_translations = {
+            record["offset"]: record.get("translation", "")
+            for record in document.get("extra_texts", [])
+        }
+        indent = "        : "
+        credit_blocks = [
+            (0x1281, 0x12BA, [
+                ("SCENARIO", None),
+                (indent + "RUSH-TEAM", None),
+                (indent, "012B1"),
+            ]),
+            (0x12DE, 0x1304, [
+                ("SYSTEM PRODUCER", None),
+                (indent, "012FB"),
+            ]),
+            (0x132A, 0x13C6, [
+                ("TECHNICAL PROGRAM", None),
+                (indent, "01349"),
+                (indent, "0136A"),
+                (indent, "01384"),
+                (indent, "013A4"),
+                (indent, "013C3"),
+            ]),
+            (0x143E, 0x14C6, [
+                ("GRAPHICS PRODUCE", None),
+                (indent + "TOMBOY", None),
+                (indent, "01476"),
+                ("CHARACTER DESIGN", None),
+                (indent, "014A0"),
+                ("GRAPHICS", None),
+                (indent, "014BF"),
+            ]),
+            (0x14EC, 0x152F, [
+                ("GRAPHICS DESIGN", None),
+                (indent + "R-FRONTIER", None),
+                (indent, "01528"),
+            ]),
+            (0x1554, 0x15F6, [
+                ("GRAPHICS EDIT", None),
+                (indent, "01567"),
+                (indent + "VOGUE", None),
+                (indent, "015A3"),
+                (indent, "015C1"),
+                (indent, "015D9"),
+                (indent + "GEO", None),
+            ]),
+            (0x166E, 0x16C3, [
+                ("SOUND PRODUCE", None),
+                (indent + "Muse", None),
+                ("MUSIC & SOUND", None),
+                (indent + "RAY", None),
+                (indent + "MARINA", None),
+            ]),
+            (0x16E5, 0x1799, [
+                ("TECHNICAL DIRECTOR", None),
+                (indent, "01704"),
+                ("TECHNICAL ADVISER", None),
+                (indent, "0172D"),
+                (indent, "0174B"),
+                ("ASSISTANT DIRECTOR", None),
+                (indent, "01774"),
+                (indent, "01792"),
+            ]),
+            (0x17C6, 0x1839, [
+                ("PACKAGE DESIGN", None),
+                (indent, "017D9"),
+                ("DIRECTOR", None),
+                (indent + "RUSH-TEAM", None),
+                (indent, "01811"),
+                ("PRODUCER", None),
+                (indent, "01830"),
+            ]),
+        ]
+        for start, end, lines in credit_blocks:
+            encoded_lines = []
+            for ascii_text, translation_offset in lines:
+                line = b"\x21" + ascii_text.encode("ascii") + b"\x00"
+                if translation_offset is not None:
+                    translation = credit_translations.get(translation_offset, "")
+                    if not translation:
+                        raise ValueError(f"missing credit translation at {translation_offset}")
+                    line += encode_translation(translation, codes)
+                encoded_lines.append(line)
+            replacements.append((start, end, b"\xA5".join(encoded_lines)))
+            credit_ranges.append((start, end))
+
     for record in document.get("extra_texts", []):
         if record.get("translation") in (None, ""):
             continue
         start, end = int(record["offset"], 16), int(record["end"], 16)
+        if any(block_start <= start and end <= block_end for block_start, block_end in credit_ranges):
+            continue
         overlaps = [(a, b, payload) for a, b, payload in replacements if a <= end and start <= b]
         if overlaps:
             # Prefer a manually supplied full-range extra record over a
