@@ -24,7 +24,7 @@ BLTY_RED_INDEX = 12
 BLTY_CYAN_INDEX = 13
 BLTY_SUBTITLE_SIZE = (160, 65)
 BLTY_SUBTITLE_CENTER_X = 366
-BLTY_SUBTITLE_Y = 205
+BLTY_SUBTITLE_Y = 210
 
 
 def normalize_indexed(image: Image.Image, reference: Image.Image) -> Image.Image:

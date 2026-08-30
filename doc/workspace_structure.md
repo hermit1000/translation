@@ -163,6 +163,8 @@ binary_inputs-pc98/
 
 ## 작업 시 주의사항
 
+- Python 스크립트는 Conda `base` 환경을 사용해 실행한다.
+- 문서, JSON, Python 소스(`*.py`)를 포함한 모든 텍스트 파일은 CRLF 줄바꿈 형식으로 저장한다.
 - 자동화 스크립트의 `ws_num`, `platform` 값이 코드에 고정된 경우가 많다. 실행 전에 대상 workspace와 `pc98`/`dos` 설정을 확인해야 한다.
 - `script-pc98`에서 `*_kor.json`만 수정하더라도 같은 이름의 `*_jpn.json` 주소 범위가 기준이 되므로 두 파일을 쌍으로 관리해야 한다.
 - `write_script_auto.py`는 `jpn-pc98`의 원본을 읽어 `kor-pc98`에 쓴다. `kor-pc98`의 기존 파일을 원본처럼 사용하지 않는다.

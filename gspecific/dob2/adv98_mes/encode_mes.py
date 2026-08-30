@@ -8,11 +8,16 @@ import hashlib
 import json
 from pathlib import Path
 
-from gspecific.dob1.adv98_mes.translation_codec import encode_translation, load_font_codes
+from gspecific.dob1.adv98_mes.translation_codec import (
+    encode_adv98_text,
+    encode_translation,
+    load_font_codes,
+)
 
 
 KEEP_ORIGINAL = "@keep"
 DISPLAY_LINE_CELLS = 31
+PRESERVED_ASCII_PREFIXES = ("se &", "se $", "se '")
 
 
 def trim_wrap_boundary_spaces(value: str, width: int = DISPLAY_LINE_CELLS) -> str:
@@ -23,8 +28,62 @@ def trim_wrap_boundary_spaces(value: str, width: int = DISPLAY_LINE_CELLS) -> st
         if character == " " and cells > 0 and cells % (width - 1) == 0:
             continue
         output.append(character)
-        cells += 1
+        # PC-98 Japanese/Korean glyphs occupy two display cells; ASCII
+        # controls and spaces occupy one.  Counting Python characters here
+        # leaves a padding space at the 31-cell boundary for DBCS text.
+        cells += 2 if ord(character) >= 0x80 else 1
     return "".join(output)
+
+
+def encode_record_translation(
+    original: str, translation: str, codes: dict[str, str], raw: bytes | None = None
+) -> bytes:
+    """Preserve DOB2 inline ASCII controls and encode only their display text."""
+    for prefix in PRESERVED_ASCII_PREFIXES:
+        if original.startswith(prefix) and translation.startswith(prefix):
+            display_text = trim_wrap_boundary_spaces(translation[len(prefix) :])
+            return prefix.encode("ascii") + encode_translation(display_text, codes)
+    if raw is not None and len(raw) >= 3 and raw[1:3] == bytes.fromhex("81 6D"):
+        # CONTROL_08's one-byte speaker ID precedes the source opening bracket.
+        return raw[:1] + encode_translation(trim_wrap_boundary_spaces(translation), codes)
+    # After CONTROL_08, the one-byte compressed glyph before ``［`` is the
+    # speaker-ID parameter, not dialogue text. Preserve it for the engine,
+    # while replacing the visible Japanese speaker label with the translation.
+    speaker_parameter = original[0].encode("cp932") if original else b""
+    compressed_parameter = (
+        len(speaker_parameter) == 2
+        and speaker_parameter[0] == 0x82
+        and 0x2D <= speaker_parameter[1] - 0x72 <= 0x7F
+    )
+    if len(original) >= 2 and original[1] == "［" and compressed_parameter:
+        return encode_adv98_text(original[0]) + encode_translation(
+            trim_wrap_boundary_spaces(translation), codes
+        )
+    # In the complementary form, CONTROL_08 has already consumed the lead
+    # byte of a two-byte ``［`` parameter (81), leaving its 6D trail byte at
+    # the start of this text record: ``めシーラ］``. Keep that trail byte and
+    # remove only the duplicate translated opening bracket.
+    if compressed_parameter and "［" not in original and "］" in original:
+        display_text = translation
+        if translation.startswith(("[", "〔")):
+            closing = next((mark for mark in ("]", "〕") if mark in translation[1:]), None)
+            if closing is not None:
+                close_index = translation.index(closing, 1)
+                display_text = translation[1:close_index] + "]" + translation[close_index + 1 :]
+        return encode_adv98_text(original[0]) + encode_translation(
+            trim_wrap_boundary_spaces(display_text), codes
+        )
+    bracket_positions = [original.find(mark) for mark in ("［", "］", "[", "]")]
+    bracket_positions = [position for position in bracket_positions if position >= 0]
+    if bracket_positions:
+        prefix_end = min(bracket_positions)
+        prefix = original[:prefix_end]
+        if prefix and any(ord(character) >= 128 for character in prefix):
+            # Japanese text before a speaker bracket is a stray/merged marker;
+            # omit it from the encoded dialogue as well as visible text.
+            display_text = translation[len(prefix) :] if translation.startswith(prefix) else translation
+            return encode_translation(trim_wrap_boundary_spaces(display_text), codes)
+    return encode_translation(trim_wrap_boundary_spaces(translation), codes)
 
 
 def main() -> int:
@@ -84,7 +143,21 @@ def main() -> int:
             # Normalize only the encoded MES value.  Keep the editable JSON
             # exactly as entered so later translation work does not inherit
             # shifted line-boundary spaces.
-            encoded = encode_translation(trim_wrap_boundary_spaces(translation), codes)
+            if (
+                start > 0
+                and source[start - 1 : start + 1] == bytes.fromhex("81 6D")
+                and record["original"].startswith("め")
+                and "［" not in record["original"]
+                and "］" in record["original"]
+            ):
+                # The source record starts at the 6D trail byte of an 81 6D
+                # opening bracket. Expand the replacement by one byte so the
+                # translated 〔 glyph replaces the complete bracket pair.
+                translation = translation.translate(str.maketrans({"[": "〔", "]": "〕"}))
+                encoded = encode_translation(trim_wrap_boundary_spaces(translation), codes)
+                start -= 1
+            else:
+                encoded = encode_record_translation(record["original"], translation, codes, expected)
         except ValueError as exc:
             entry["status"] = f"error: {exc}"
             raise
