@@ -20,6 +20,18 @@ DISPLAY_LINE_CELLS = 31
 PRESERVED_ASCII_PREFIXES = ("se &", "se $", "se '")
 
 
+def normalize_control08_speaker_translation(value: str) -> str:
+    """Remove decoder artifacts before a CONTROL_08 speaker label."""
+    opening_positions = [
+        position for mark in ("[", "〔") if (position := value.find(mark)) >= 0
+    ]
+    if opening_positions:
+        return value[min(opening_positions) :]
+    if value.startswith("め") and any(mark in value[1:] for mark in ("]", "〕")):
+        return "〔" + value[1:]
+    return value
+
+
 def trim_wrap_boundary_spaces(value: str, width: int = DISPLAY_LINE_CELLS) -> str:
     """Remove spaces at ADV98's 31st, 61st, ... editable cells."""
     output: list[str] = []
@@ -28,10 +40,10 @@ def trim_wrap_boundary_spaces(value: str, width: int = DISPLAY_LINE_CELLS) -> st
         if character == " " and cells > 0 and cells % (width - 1) == 0:
             continue
         output.append(character)
-        # PC-98 Japanese/Korean glyphs occupy two display cells; ASCII
-        # controls and spaces occupy one.  Counting Python characters here
-        # leaves a padding space at the 31-cell boundary for DBCS text.
-        cells += 2 if ord(character) >= 0x80 else 1
+        # ADV98 advances one text cell per displayed character, including
+        # full-width Japanese/Korean glyphs. The encoded byte width does not
+        # determine the 31-cell dialogue-window position.
+        cells += 1
     return "".join(output)
 
 
@@ -45,7 +57,8 @@ def encode_record_translation(
             return prefix.encode("ascii") + encode_translation(display_text, codes)
     if raw is not None and len(raw) >= 3 and raw[1:3] == bytes.fromhex("81 6D"):
         # CONTROL_08's one-byte speaker ID precedes the source opening bracket.
-        return raw[:1] + encode_translation(trim_wrap_boundary_spaces(translation), codes)
+        display_text = normalize_control08_speaker_translation(translation)
+        return raw[:1] + encode_translation(trim_wrap_boundary_spaces(display_text), codes)
     # After CONTROL_08, the one-byte compressed glyph before ``［`` is the
     # speaker-ID parameter, not dialogue text. Preserve it for the engine,
     # while replacing the visible Japanese speaker label with the translation.
@@ -153,6 +166,7 @@ def main() -> int:
                 # The source record starts at the 6D trail byte of an 81 6D
                 # opening bracket. Expand the replacement by one byte so the
                 # translated 〔 glyph replaces the complete bracket pair.
+                translation = normalize_control08_speaker_translation(translation)
                 translation = translation.translate(str.maketrans({"[": "〔", "]": "〕"}))
                 encoded = encode_translation(trim_wrap_boundary_spaces(translation), codes)
                 start -= 1
@@ -172,9 +186,17 @@ def main() -> int:
     rebuilt = source
     for start, end, encoded in reversed(replacements):
         rebuilt = rebuilt[:start] + encoded + rebuilt[end + 1 :]
+    if args.source_mes.suffix.upper() == ".CAL" and len(rebuilt) > len(source):
+        raise ValueError(
+            f"encoded CAL exceeds its fixed source allocation: "
+            f"{len(rebuilt)} > {len(source)} bytes"
+        )
     args.output_mes.parent.mkdir(parents=True, exist_ok=True)
     args.output_mes.write_bytes(rebuilt)
-    args.lang_json.write_text(json.dumps(lang, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    lang_text = json.dumps(lang, ensure_ascii=False, indent=2) + "\n"
+    args.lang_json.write_text(
+        lang_text.replace("\n", "\r\n"), encoding="utf-8", newline=""
+    )
     print(
         json.dumps(
             {

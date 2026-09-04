@@ -1,4 +1,4 @@
-"""Encode all translated DOB2 ADV98 MES files in a workspace."""
+"""Encode all translated DOB2 ADV98 MES/CAL files in a workspace."""
 
 from __future__ import annotations
 
@@ -21,8 +21,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--files",
         nargs="+",
-        metavar="MES",
-        help="encode only these MES filenames; by default encode every source MES",
+        metavar="SCRIPT",
+        help="encode only these MES/CAL filenames; by default encode every source MES/CAL",
     )
     parser.add_argument(
         "--font-table",
@@ -40,9 +40,13 @@ def main() -> int:
     script_dir = workspace / "script-pc98" / "MES"
     output_dir = workspace / "kor-pc98" / "MES"
     dosbox_output_dir = workspace / "kor-pc98-dosbox-x" / "MES"
-    names = args.files or [path.name for path in sorted(source_dir.glob("*.MES"))]
+    names = args.files or [
+        path.name
+        for path in sorted(source_dir.iterdir())
+        if path.is_file() and path.suffix.upper() in {".MES", ".CAL"}
+    ]
     if not names:
-        raise SystemExit(f"no MES files found: {source_dir}")
+        raise SystemExit(f"no MES/CAL files found: {source_dir}")
 
     font_table = args.font_table.resolve()
     failures = 0
