@@ -67,7 +67,10 @@ def make_token(
     return result
 
 
-def decode_mes(data: bytes) -> list[dict[str, Any]]:
+def decode_mes(
+    data: bytes,
+    parameter_controls: tuple[int, ...] = (0x08, 0x0C, 0x0D, 0x19),
+) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     offset = 0
 
@@ -187,7 +190,7 @@ def decode_mes(data: bytes) -> list[dict[str, Any]]:
         # for internal display/control operations.  The parameter often falls
         # in the compressed-SJIS printable range; treating it as text produces
         # bogus trailing kana such as ``ぁ`` or ``っ`` after a sentence.
-        if first in (0x08, 0x0C, 0x0D, 0x19) and second is not None:
+        if first in parameter_controls and second is not None:
             result.append(
                 make_token(
                     offset,

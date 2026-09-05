@@ -165,18 +165,10 @@ def planar_rows_to_indices(
 
 
 def apply_output_mode(rows: list[bytes], output_mode: int) -> list[bytes]:
-    """Undo ADV98's cumulative row XOR before either mode writes VRAM."""
+    """Validate the VRAM output mode without altering decoded image rows."""
     if output_mode not in (0, 1):
         raise ValueError(f"unsupported GPC output mode {output_mode}")
-
-    output = []
-    previous = None
-    for row in rows:
-        if previous is not None:
-            row = bytes(current ^ prior for current, prior in zip(row, previous))
-        output.append(row)
-        previous = row
-    return output
+    return rows
 
 
 def decode_gpc(data: bytes, *, output_mode: int = 0) -> GPCImage:
@@ -327,9 +319,11 @@ def write_artifacts(
             str(mode): count for mode, count in sorted((observed_modes or {}).items())
         },
     }
+    metadata_text = json.dumps(metadata, ensure_ascii=False, indent=2) + "\n"
     (output / f"{stem}.meta.json").write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+        metadata_text.replace("\n", "\r\n"),
         encoding="utf-8",
+        newline="",
     )
     return decoded
 

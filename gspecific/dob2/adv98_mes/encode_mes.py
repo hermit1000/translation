@@ -32,8 +32,10 @@ def normalize_control08_speaker_translation(value: str) -> str:
     return value
 
 
-def trim_wrap_boundary_spaces(value: str, width: int = DISPLAY_LINE_CELLS) -> str:
-    """Remove spaces at ADV98's 31st, 61st, ... editable cells."""
+def trim_wrap_boundary_spaces(value: str, width: int | None = None) -> str:
+    """Remove spaces at the first cell after each configured display line."""
+    if width is None:
+        width = DISPLAY_LINE_CELLS
     output: list[str] = []
     cells = 0
     for character in value:
