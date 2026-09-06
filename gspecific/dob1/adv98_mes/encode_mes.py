@@ -16,6 +16,9 @@ except ImportError:
     from decode_mes import decode_mes
 
 
+from gspecific.adv_common.patches import apply_replacements
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     workspace = Path(r"C:\work_han\workspace2")
@@ -50,9 +53,8 @@ def main() -> int:
     # appear shifted or disappear.  Keep the original macro at these
     # boundaries; ordinary punctuation macros are still translated below.
     def preserve_boundary_macro(start: int, end: int) -> bool:
-        # Kept as a hook for future engine-specific boundaries.  The
-        # 004F1 compressed-pair fix below now makes raw Korean punctuation
-        # safe, so punctuation macros must be translated to 81 44/81 43.
+        # Kept as a hook for future engine-specific boundaries.
+        # Punctuation macros are translated to 81 44/81 43.
         return False
 
     for record in document["records"]:
@@ -206,34 +208,6 @@ def main() -> int:
             continue
         replacements.append((start, end, encode_translation(translation, codes)))
 
-    # Also scan raw BA calls directly. This covers macro calls whose argument
-    # is not exposed as the immediately following lexical token by older
-    # decoders and guarantees catalog speaker/punctuation expansion.
-    for index, value in enumerate(source[:-1]):
-        if value != 0xBA:
-            continue
-        argument_size = 1
-        argument = source[index + 1]
-        if argument == 0x28 and index + 2 < len(source):
-            slot = f"{source[index + 2]:02X}"
-            argument_size = 2
-        elif 0x23 <= argument <= 0x27:
-            slot = f"{argument - 0x23:02X}"
-        else:
-            continue
-        macro = catalog.get(slot)
-        if not macro or macro.get("category") not in {"speaker", "punctuation", "spacing"}:
-            continue
-        translation = command_overrides.get(index) or macro.get("translation")
-        if translation is None:
-            continue
-        end = index + argument_size
-        if preserve_boundary_macro(index, end):
-            continue
-        if any(start <= index <= old_end or start <= end <= old_end for start, old_end, _ in replacements):
-            continue
-        replacements.append((index, end, encode_translation(translation, codes)))
-
     replacements.sort()
     # Inventory/choice labels in these two room scripts are emitted from a
     # small unindexed MES text block rather than dialogue/overlay metadata.
@@ -259,19 +233,10 @@ def main() -> int:
         if source[start:start + len(old)] == old and not any(a <= start <= b for a, b, _ in replacements):
             replacements.append((start, start + len(old) - 1, new))
     replacements.sort()
-    # 000046/004F1 contains two adjacent compressed records whose Shift-JIS
-    # continuation bytes are split out of the metadata (004FE and 00500).
-    # Replacing only the lead bytes leaves A4/A3 in the stream, producing a
-    # missing Korean syllable and Japanese-looking punctuation.  Consume the
-    # complete four-byte pair as one replacement.
-    if args.source_mes.name.upper() == "000046.MES":
-        first = next((r for r in replacements if r[0] == 0x4FE), None)
-        second = next((r for r in replacements if r[0] == 0x500), None)
-        if first and second and first[1] == 0x4FE and second[1] == 0x500:
-            replacements.remove(first)
-            replacements.remove(second)
-            replacements.append((0x4FE, 0x501, first[2] + second[2]))
-            replacements.sort()
+    # 000046/004F1 (and 000047/00493) selects between compressed text
+    # fragments with A4 and closes the conditional block with A3.  These
+    # are structural bytes, not Shift-JIS trails; retain both boundaries
+    # by replacing each fragment only within its own source range.
     if args.debug_offset:
         target = int(args.debug_offset, 16)
         delta = 0
@@ -285,9 +250,7 @@ def main() -> int:
                 f"translation ranges overlap: {previous[0]:05X}-{previous[1]:05X} "
                 f"and {current[0]:05X}-{current[1]:05X}"
             )
-    rebuilt = source
-    for start, end, translated in reversed(replacements):
-        rebuilt = rebuilt[:start] + translated + rebuilt[end + 1 :]
+    rebuilt = apply_replacements(source, replacements)
     args.output_mes.parent.mkdir(parents=True, exist_ok=True)
     args.output_mes.write_bytes(rebuilt)
     print(

@@ -16,6 +16,7 @@ Dead of the Brain PC-98판의 ADV98 MES 스크립트를 추출하고 번역본�
 - `find_boundary_punctuation.py`: 화면 31·61셀의 `.`, `!`, `?` 검사
 - `find_untracked_text.py`: lang에 등록되지 않은 화면 출력 후보를 검토용 JSON으로 추출
 - `add_untracked_overlays.py`: 고신뢰 미등록 후보를 lang의 overlay 번역 대상으로 추가
+- `link_overlay_texts.py`: 원본 MES를 분석하여 overlay의 연결 정보를 별도 출력 폴더에 준비한다.
 - `control_codes.json`: 제어 코드 정의
 - `macro_catalog.json`: ADV98 내장 매크로 정의
 - `file_macro_overrides.json`: 파일별 매크로 예외
@@ -94,3 +95,18 @@ python -m gspecific.dob1.adv98_mes.find_boundary_punctuation
 - `adv98_dec.py`: TC0 래퍼 복호화
 - `unpack_adv98_runtime.py`: Unicorn으로 self-extractor 실행 후 64 KiB dump
 - `disasm_mz16.py`: MZ 또는 raw 16비트 코드 선형 디스어셈블
+
+## Overlay 연결 정보
+
+`python -m gspecific.dob1.adv98_mes.link_overlay_texts C:\work_han\workspace2 --output-dir .tmp/dob1_overlay_connections`
+
+각 overlay의 `connections` 배열에는 같은 파일의 연결 대상 `id`와 원본 `offset`을 기록한다.
+여러 구간이 이어지면 자신을 제외한 모든 연결 항목을 포함한다. ID가 없는 기존 overlay는
+참조에서 `overlay:<offset>`으로 식별하며, 기존 항목의 필드는 유지한다.
+
+원본 바이너리 전체를 디코딩하여 텍스트 사이에 구두점·공백 매크로 또는 `03` 메시지 UI
+매크로만 있는 흐름을 연결한다. 새 화자, 다른 명령, 제어 코드, 분기 경계를 만나면 끊는다.
+이미 dialogue segment에 포함된 overlay도 해당 dialogue와 연결한다.
+이는 구조상 텍스트 흐름이며 동일 문장·화자나 게임 실행 시 경로를 확정하는 정보는 아니다.
+빈 배열은 이 규칙으로 확인한 연결이 없다는 뜻이다. Marine Philt의 `BA 27 BA 23`
+규칙은 DOB1에서 화자 매크로를 뜻하므로 사용하지 않는다.

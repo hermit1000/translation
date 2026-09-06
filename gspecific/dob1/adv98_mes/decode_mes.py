@@ -36,40 +36,19 @@ SPECIAL_SJIS = {
 }
 
 
-def is_sjis_lead(value: int) -> bool:
-    return 0x81 <= value <= 0x9F or 0xE0 <= value <= 0xFC
+if __package__ in (None, ""):
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-
-def is_sjis_trail(value: int) -> bool:
-    return 0x40 <= value <= 0x7E or 0x80 <= value <= 0xFC
-
-
-def decode_pair(first: int, second: int) -> str:
-    return bytes((first, second)).decode("cp932", errors="replace")
-
-
-def make_token(
-    offset: int,
-    size: int,
-    raw: bytes,
-    token_type: str,
-    value: str | int,
-    **extra: Any,
-) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "offset": offset,
-        "size": size,
-        "bytes": list(raw),
-        "type": token_type,
-        "value": value,
-    }
-    result.update(extra)
-    return result
+from gspecific.adv_common.tokens import (
+    is_sjis_lead, is_sjis_trail, decode_pair, make_token, verify_tokens,
+)
 
 
 def decode_mes(
     data: bytes,
     parameter_controls: tuple[int, ...] = (0x08, 0x0C, 0x0D, 0x19),
+    *, ascii_output: bool = False,
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     offset = 0
@@ -77,6 +56,21 @@ def decode_mes(
     while offset < len(data):
         first = data[offset]
         second = data[offset + 1] if offset + 1 < len(data) else None
+
+        # Opt-in for games with confirmed 21 <printable ASCII> 00 output.
+        # Interpret at a lexical boundary, never by searching inside operands.
+        if ascii_output and first == 0x21:
+            end = data.find(b"\x00", offset + 1)
+            if end >= 0 and all(0x20 <= value <= 0x7E for value in data[offset + 1:end]):
+                result.append(make_token(offset, 1, data[offset:offset + 1], "control", "CONTROL_21"))
+                if end > offset + 1:
+                    raw = data[offset + 1:end]
+                    result.append(make_token(offset + 1, len(raw), raw, "text", raw.decode("ascii"),
+                                             encoding="ascii", display_text=True,
+                                             syntax="ascii-output-nul"))
+                result.append(make_token(end, 1, data[end:end + 1], "control", "CONTROL_00"))
+                offset = end + 1
+                continue
 
         previous = result[-1] if result else None
         if (
@@ -432,12 +426,6 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 
 def load_definition(name: str) -> dict[str, Any]:
     return json.loads((PACKAGE_DIR / name).read_text(encoding="utf-8"))
-
-
-def verify_tokens(data: bytes, tokens: list[dict[str, Any]]) -> None:
-    rebuilt = bytes(byte for token in tokens for byte in token["bytes"])
-    if rebuilt != data:
-        raise ValueError("decoded tokens do not reconstruct the original MES bytes")
 
 
 def annotate_records(records: list[dict[str, Any]]) -> None:

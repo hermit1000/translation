@@ -13,99 +13,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import re
 from pathlib import Path
 from typing import Any
 
 from gspecific.dob1.adv98_mes import decode_mes as dob1
+from gspecific.adv_common.ascii import find_ascii_spans as _ascii_spans, resolve_ascii_and_gaiji
 
 
-def _ascii_spans(data: bytes) -> dict[int, int]:
-    """Return conservative, clearly English byte spans as start -> end."""
-    spans: dict[int, int] = {}
-    # 0x21 is ADV98's non-printing ASCII-output marker in DOB2.  Excluding it
-    # keeps strings such as ``!Please ...`` aligned with the actual screen,
-    # where the leading exclamation mark is not drawn.
-    for match in re.finditer(rb"[\x20\x22-\x7e]{2,}", data):
-        start, end = match.span()
-        raw = match.group()
-        stripped = raw.lstrip()
-        # Quoted graphics commands and ``se "..."`` audio commands are
-        # ADV98 operands, not screen text.  Leave them to the base lexer.
-        if stripped.startswith(b'"') or stripped.lower().startswith(b'se "'):
-            continue
-        letters = bytes(value for value in raw if 0x41 <= value <= 0x5A or 0x61 <= value <= 0x7A)
-        if len(letters) < 2:
-            continue
-        has_space = b" " in raw
-        uppercase_label = letters == letters.upper()
-        nul_terminated = end < len(data) and data[end] == 0
-        a5_delimited = (
-            start > 0
-            and end < len(data)
-            and data[start - 1] == 0xA5
-            and data[end] == 0xA5
-        )
-        # Mixed-case text is accepted only when spacing or a NUL terminator
-        # makes it unmistakably ASCII.  This avoids converting ordinary DOB2
-        # compressed hiragana which happens to occupy printable ASCII bytes.
-        if has_space or nul_terminated or (uppercase_label and a5_delimited):
-            spans[start] = end
-    return spans
-
-
-def decode_mes(data: bytes) -> list[dict[str, Any]]:
-    base = dob1.decode_mes(data)
-    token_starts = {token["offset"] for token in base}
-    token_ends = {token["offset"] + token["size"] for token in base}
-    ascii_spans: dict[int, int] = {}
-    for raw_start, raw_end in _ascii_spans(data).items():
-        # A printable SJIS trail byte can attach itself to the front of an
-        # English regex match.  Trim at most that one byte to a token boundary.
-        starts = [value for value in (raw_start, raw_start + 1) if value in token_starts]
-        ends = [value for value in (raw_end, raw_end - 1) if value in token_ends]
-        if starts and ends and min(starts) < max(ends):
-            ascii_spans[min(starts)] = max(ends)
-    result: list[dict[str, Any]] = []
-    index = 0
-
-    while index < len(base):
-        token = base[index]
-        start = token["offset"]
-        ascii_end = ascii_spans.get(start)
-        if ascii_end is not None:
-            result.append(
-                dob1.make_token(
-                    start,
-                    ascii_end - start,
-                    data[start:ascii_end],
-                    "text",
-                    data[start:ascii_end].decode("ascii"),
-                    encoding="ascii",
-                    display_text=start > 0 and data[start - 1] == 0x21,
-                )
-            )
-            while index < len(base) and base[index]["offset"] < ascii_end:
-                index += 1
-            continue
-
-        raw = token["bytes"]
-        if token["type"] == "text" and len(raw) == 2 and "\ufffd" in str(token["value"]):
-            result.append(
-                dob1.make_token(
-                    start,
-                    2,
-                    bytes(raw),
-                    "gaiji",
-                    f"GAIJI_{raw[0]:02X}{raw[1]:02X}",
-                )
-            )
-        else:
-            result.append(token)
-        index += 1
-
-    dob1.verify_tokens(data, result)
-    return result
+def decode_mes(data: bytes, *, structured_ascii: bool = False) -> list[dict[str, Any]]:
+    base = dob1.decode_mes(data, ascii_output=structured_ascii)
+    return resolve_ascii_and_gaiji(data, base)
 
 
 def make_records(tokens: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -123,9 +40,9 @@ def make_records(tokens: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return records
 
 
-def decode_document(source: Path, source_name: str) -> dict[str, Any]:
+def decode_document(source: Path, source_name: str, *, structured_ascii: bool = False) -> dict[str, Any]:
     data = source.read_bytes()
-    tokens = decode_mes(data)
+    tokens = decode_mes(data, structured_ascii=structured_ascii)
     records = make_records(tokens)
     candidates = [
         record
@@ -148,7 +65,7 @@ def decode_document(source: Path, source_name: str) -> dict[str, Any]:
     }
 
 
-def write_decoded(input_path: Path, output_path: Path, force: bool) -> int:
+def write_decoded(input_path: Path, output_path: Path, force: bool, *, structured_ascii: bool = False) -> int:
     input_path = input_path.resolve()
     output_path = output_path.resolve()
     if input_path.is_file():
@@ -171,7 +88,7 @@ def write_decoded(input_path: Path, output_path: Path, force: bool) -> int:
         )
         if destination.exists() and not force:
             raise FileExistsError(f"output exists; pass --force: {destination}")
-        document = decode_document(source, relative.as_posix())
+        document = decode_document(source, relative.as_posix(), structured_ascii=structured_ascii)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         totals["files_written"] += 1
@@ -187,8 +104,10 @@ def main() -> int:
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--structured-ascii", action="store_true",
+                        help="parse confirmed 21 ASCII 00 output spans before lexical heuristics")
     args = parser.parse_args()
-    return write_decoded(args.input, args.output, args.force)
+    return write_decoded(args.input, args.output, args.force, structured_ascii=args.structured_ascii)
 
 
 if __name__ == "__main__":

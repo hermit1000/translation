@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from gspecific.dob1.adv98_mes import decode_mes as dob1
-from gspecific.dob2.adv98_mes.decode_mes import _ascii_spans
+from gspecific.adv_common.ascii import find_ascii_spans as _ascii_spans, resolve_ascii_and_gaiji
 
 
 def _consume_marine_parameters(
@@ -49,60 +49,14 @@ def _consume_marine_parameters(
     return result
 
 
-def decode_mes(data: bytes) -> list[dict[str, Any]]:
+def decode_mes(data: bytes, *, structured_ascii: bool = True) -> list[dict[str, Any]]:
     """Lexically decode MES while preserving every source byte."""
     base = _consume_marine_parameters(
-        dob1.decode_mes(data, parameter_controls=(0x08, 0x09, 0x0C, 0x0D, 0x19)),
+        dob1.decode_mes(data, parameter_controls=(0x08, 0x09, 0x0C, 0x0D, 0x19),
+                       ascii_output=structured_ascii),
         data,
     )
-    token_starts = {token["offset"] for token in base}
-    token_ends = {token["offset"] + token["size"] for token in base}
-    ascii_spans: dict[int, int] = {}
-    for raw_start, raw_end in _ascii_spans(data).items():
-        starts = [value for value in (raw_start, raw_start + 1) if value in token_starts]
-        ends = [value for value in (raw_end, raw_end - 1) if value in token_ends]
-        if starts and ends and min(starts) < max(ends):
-            ascii_spans[min(starts)] = max(ends)
-
-    result: list[dict[str, Any]] = []
-    index = 0
-    while index < len(base):
-        token = base[index]
-        start = token["offset"]
-        ascii_end = ascii_spans.get(start)
-        if ascii_end is not None:
-            result.append(
-                dob1.make_token(
-                    start,
-                    ascii_end - start,
-                    data[start:ascii_end],
-                    "text",
-                    data[start:ascii_end].decode("ascii"),
-                    encoding="ascii",
-                    display_text=start > 0 and data[start - 1] == 0x21,
-                )
-            )
-            while index < len(base) and base[index]["offset"] < ascii_end:
-                index += 1
-            continue
-
-        raw = token["bytes"]
-        if token["type"] == "text" and len(raw) == 2 and "\ufffd" in str(token["value"]):
-            result.append(
-                dob1.make_token(
-                    start,
-                    2,
-                    bytes(raw),
-                    "gaiji",
-                    f"GAIJI_{raw[0]:02X}{raw[1]:02X}",
-                )
-            )
-        else:
-            result.append(token)
-        index += 1
-
-    dob1.verify_tokens(data, result)
-    return result
+    return resolve_ascii_and_gaiji(data, base)
 
 
 def make_records(tokens: list[dict[str, Any]]) -> list[dict[str, Any]]:

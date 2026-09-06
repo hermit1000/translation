@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
-"""Encode one Marine Philt MES from its info/lang translation documents."""
+"""Encode Marine Philt MES using the shared DOB2-compatible record adapter."""
 
-from gspecific.dob2.adv98_mes import encode_mes as _dob2_encode
+from gspecific.dob2.adv98_mes.encode_mes import main as encode_main
 
 
-# Marine Philt's dialogue window displays 27 characters per line.  The
-# shared encoder removes a boundary space at the first cell of the next line;
-# configure that shared routine locally without changing DOB2's 30-cell rule.
-_dob2_encode.DISPLAY_LINE_CELLS = 28
-main = _dob2_encode.main
+def main() -> int:
+    # Existing boundary convention: 28 denotes a 27-cell display line.
+    return encode_main(width=28, speaker_repairs=False)
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

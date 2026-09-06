@@ -9,6 +9,8 @@ import re
 from pathlib import Path
 
 from .decode_mes import decode_document
+from .link_overlay_texts import annotate_connections
+from .migrate_ascii import preserve_translations
 
 
 SPEAKER_RE = re.compile(r"^(?:se [^［]*?)?［([^］]+)］")
@@ -33,12 +35,14 @@ def make_lang(info_name: str, document: dict) -> dict:
             "status": "incomplete: untranslated dialogue" if dialogue else "incomplete: untranslated overlay",
         }
         (dialogues if dialogue else overlays).append(entry)
-    return {
+    lang = {
         "format": "marine-philt-adv98-mes-lang-v1",
         "source_info": info_name,
         "dialogue_groups": dialogues,
         "overlay_texts": overlays,
     }
+    annotate_connections(document, lang)
+    return lang
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -70,17 +74,8 @@ def main() -> int:
         lang = make_lang(info_path.name, document)
         if args.force and lang_path.exists():
             previous = json.loads(lang_path.read_text(encoding="utf-8"))
-            previous_by_offset = {
-                entry.get("offset"): entry
-                for section in ("dialogue_groups", "overlay_texts")
-                for entry in previous.get(section, [])
-            }
-            for section in ("dialogue_groups", "overlay_texts"):
-                for entry in lang[section]:
-                    old = previous_by_offset.get(entry["offset"])
-                    if old and old.get("original") == entry["original"]:
-                        entry["translation"] = old.get("translation", "")
-                        entry["status"] = old.get("status", entry["status"])
+            previous_info = json.loads(info_path.read_text(encoding="utf-8"))
+            lang, _ = preserve_translations(previous_info, previous, document, lang)
         output_dir.mkdir(parents=True, exist_ok=True)
         _write_json(info_path, document)
         _write_json(lang_path, lang)

@@ -22,3 +22,5 @@ npm-global/
 
 # Generated logs
 script_log.json
+
+.tmp

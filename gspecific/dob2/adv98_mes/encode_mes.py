@@ -8,7 +8,8 @@ import hashlib
 import json
 from pathlib import Path
 
-from gspecific.dob1.adv98_mes.translation_codec import (
+from gspecific.adv_common.patches import apply_replacements
+from gspecific.adv_common.text import (
     encode_adv98_text,
     encode_translation,
     load_font_codes,
@@ -50,17 +51,21 @@ def trim_wrap_boundary_spaces(value: str, width: int | None = None) -> str:
 
 
 def encode_record_translation(
-    original: str, translation: str, codes: dict[str, str], raw: bytes | None = None
+    original: str, translation: str, codes: dict[str, str], raw: bytes | None = None,
+    *, width: int = DISPLAY_LINE_CELLS,
+    speaker_repairs: bool = True,
 ) -> bytes:
     """Preserve DOB2 inline ASCII controls and encode only their display text."""
     for prefix in PRESERVED_ASCII_PREFIXES:
         if original.startswith(prefix) and translation.startswith(prefix):
-            display_text = trim_wrap_boundary_spaces(translation[len(prefix) :])
+            display_text = trim_wrap_boundary_spaces(translation[len(prefix) :], width)
             return prefix.encode("ascii") + encode_translation(display_text, codes)
+    if not speaker_repairs:
+        return encode_translation(trim_wrap_boundary_spaces(translation, width), codes)
     if raw is not None and len(raw) >= 3 and raw[1:3] == bytes.fromhex("81 6D"):
         # CONTROL_08's one-byte speaker ID precedes the source opening bracket.
         display_text = normalize_control08_speaker_translation(translation)
-        return raw[:1] + encode_translation(trim_wrap_boundary_spaces(display_text), codes)
+        return raw[:1] + encode_translation(trim_wrap_boundary_spaces(display_text, width), codes)
     # After CONTROL_08, the one-byte compressed glyph before ``［`` is the
     # speaker-ID parameter, not dialogue text. Preserve it for the engine,
     # while replacing the visible Japanese speaker label with the translation.
@@ -72,7 +77,7 @@ def encode_record_translation(
     )
     if len(original) >= 2 and original[1] == "［" and compressed_parameter:
         return encode_adv98_text(original[0]) + encode_translation(
-            trim_wrap_boundary_spaces(translation), codes
+            trim_wrap_boundary_spaces(translation, width), codes
         )
     # In the complementary form, CONTROL_08 has already consumed the lead
     # byte of a two-byte ``［`` parameter (81), leaving its 6D trail byte at
@@ -86,7 +91,7 @@ def encode_record_translation(
                 close_index = translation.index(closing, 1)
                 display_text = translation[1:close_index] + "]" + translation[close_index + 1 :]
         return encode_adv98_text(original[0]) + encode_translation(
-            trim_wrap_boundary_spaces(display_text), codes
+            trim_wrap_boundary_spaces(display_text, width), codes
         )
     bracket_positions = [original.find(mark) for mark in ("［", "］", "[", "]")]
     bracket_positions = [position for position in bracket_positions if position >= 0]
@@ -97,11 +102,11 @@ def encode_record_translation(
             # Japanese text before a speaker bracket is a stray/merged marker;
             # omit it from the encoded dialogue as well as visible text.
             display_text = translation[len(prefix) :] if translation.startswith(prefix) else translation
-            return encode_translation(trim_wrap_boundary_spaces(display_text), codes)
-    return encode_translation(trim_wrap_boundary_spaces(translation), codes)
+            return encode_translation(trim_wrap_boundary_spaces(display_text, width), codes)
+    return encode_translation(trim_wrap_boundary_spaces(translation, width), codes)
 
 
-def main() -> int:
+def main(*, width: int = DISPLAY_LINE_CELLS, speaker_repairs: bool = True) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source_mes", type=Path)
     parser.add_argument("info_json", type=Path)
@@ -159,7 +164,8 @@ def main() -> int:
             # exactly as entered so later translation work does not inherit
             # shifted line-boundary spaces.
             if (
-                start > 0
+                speaker_repairs
+                and start > 0
                 and source[start - 1 : start + 1] == bytes.fromhex("81 6D")
                 and record["original"].startswith("め")
                 and "［" not in record["original"]
@@ -170,10 +176,11 @@ def main() -> int:
                 # translated 〔 glyph replaces the complete bracket pair.
                 translation = normalize_control08_speaker_translation(translation)
                 translation = translation.translate(str.maketrans({"[": "〔", "]": "〕"}))
-                encoded = encode_translation(trim_wrap_boundary_spaces(translation), codes)
+                encoded = encode_translation(trim_wrap_boundary_spaces(translation, width), codes)
                 start -= 1
             else:
-                encoded = encode_record_translation(record["original"], translation, codes, expected)
+                encoded = encode_record_translation(record["original"], translation, codes, expected,
+                                                    width=width, speaker_repairs=speaker_repairs)
         except ValueError as exc:
             entry["status"] = f"error: {exc}"
             raise
@@ -185,9 +192,7 @@ def main() -> int:
         if previous[1] >= current[0]:
             raise ValueError("translation ranges overlap")
 
-    rebuilt = source
-    for start, end, encoded in reversed(replacements):
-        rebuilt = rebuilt[:start] + encoded + rebuilt[end + 1 :]
+    rebuilt = apply_replacements(source, replacements)
     if args.source_mes.suffix.upper() == ".CAL" and len(rebuilt) > len(source):
         raise ValueError(
             f"encoded CAL exceeds its fixed source allocation: "
