@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 from .decode_mes import decode_document
+from gspecific.adv_common.migrate_ascii import prepare_migration
 
 
 SPEAKER_RE = re.compile(r"^［([^］]+)］")
@@ -50,17 +51,19 @@ def main() -> int:
         default=Path(r"C:\work_han\workspace1"),
     )
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--output-dir", type=Path, help="write fresh JSON to a separate directory")
     args = parser.parse_args()
 
     workspace = args.workspace.resolve()
     source_dir = workspace / "jpn-pc98" / "MES"
-    output_dir = workspace / "script-pc98" / "MES"
+    output_dir = args.output_dir or workspace / "script-pc98" / "MES"
     sources = sorted(source_dir.glob("*.MES"))
     if not sources:
         raise ValueError(f"no MES files found: {source_dir}")
 
     written = 0
     entries = 0
+    planned = []
     for source in sources:
         info_path = output_dir / f"{source.name}_info.json"
         lang_path = output_dir / f"{source.name}_lang.json"
@@ -69,20 +72,20 @@ def main() -> int:
         document = decode_document(source, f"MES/{source.name}")
         document["format"] = "dob2-adv98-mes-info-v1"
         lang = make_lang(info_path.name, document)
-        if args.force and lang_path.exists():
+        if args.force and (info_path.exists() or lang_path.exists()):
+            if not (info_path.exists() and lang_path.exists()):
+                raise ValueError(f"both existing info/lang files are required: {source.name}")
+            previous_info = json.loads(info_path.read_text(encoding="utf-8"))
             previous = json.loads(lang_path.read_text(encoding="utf-8"))
-            previous_by_offset = {
-                entry.get("offset"): entry
-                for section in ("dialogue_groups", "overlay_texts")
-                for entry in previous.get(section, [])
-            }
-            for section in ("dialogue_groups", "overlay_texts"):
-                for entry in lang[section]:
-                    old = previous_by_offset.get(entry["offset"])
-                    if old and old.get("original") == entry["original"]:
-                        entry["translation"] = old.get("translation", "")
-                        entry["status"] = old.get("status", entry["status"])
-        output_dir.mkdir(parents=True, exist_ok=True)
+            if previous.get("source_info") != info_path.name:
+                raise ValueError(f"source info reference mismatch: {source.name}")
+            document, lang, report = prepare_migration(source.read_bytes(), previous_info, previous, document)
+            if not report["safe_to_write"]:
+                raise ValueError(f"{source.name}: changed translation ranges require review; use gspecific.adv_common.migrate_ascii")
+        planned.append((info_path, lang_path, document, lang))
+    # Validate every existing pair before overwriting any file in this batch.
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for info_path, lang_path, document, lang in planned:
         info_path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         lang_path.write_text(json.dumps(lang, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         written += 1

@@ -16,6 +16,19 @@ def write_json(path: Path, value: dict) -> None:
     path.write_text(text.replace("\n", "\r\n"), encoding="utf-8", newline="")
 
 
+def source_text(item: dict) -> str | None:
+    """Return the dictionary key for a Marine dialogue item.
+
+    Connected dialogue is edited as one root entry.  Its combined source is
+    therefore the reusable key; ordinary entries continue to use ``original``.
+    """
+    combined = item.get("combined_original")
+    if isinstance(combined, str) and combined.strip():
+        return combined
+    original = item.get("original")
+    return original if isinstance(original, str) else None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("workspace", type=Path, nargs="?", default=Path(r"C:\work_han\workspace4"))
@@ -34,12 +47,14 @@ def main() -> int:
         for section in SECTIONS:
             for item in document.get(section, []):
                 entries += 1
-                original = item.get("original")
                 value = item.get("translation")
-                if not isinstance(original, str) or not original.strip() or not isinstance(value, str):
+                if not isinstance(value, str):
                     continue
                 if value.strip():
                     translated += 1
+                original = source_text(item)
+                if not isinstance(original, str) or not original.strip():
+                    continue
                 record = dictionary.setdefault(
                     original, {"count": 0, "reference": 0, "translated": [], "references": []}
                 )

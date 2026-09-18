@@ -1,0 +1,117 @@
+{
+  "format": "marine-philt-control-speaker-catalog-v1",
+  "note": "Initial catalog. Values must be confirmed from the actual DOSBox display.",
+  "unknown_policy": "warn_and_use_zero",
+  "files": {
+    "03_TOP.MES": {
+      "8F": {
+        "label": "[진]",
+        "cells": 3,
+        "status": "confirmed",
+        "source": "user-observed"
+      },
+      "text_offsets": {
+        "00007": {
+          "label": "[시드]",
+          "cells": 4,
+          "status": "confirmed",
+          "source": "user-observed"
+        },
+        "001D5": {
+          "label": "[리나]",
+          "cells": 4,
+          "status": "confirmed",
+          "source": "user-observed"
+        },
+        "002D9": {
+          "label": "[딕]",
+          "cells": 3,
+          "status": "confirmed",
+          "source": "user-observed"
+        },
+        "00418": {
+          "label": "[빌리]",
+          "cells": 4,
+          "status": "confirmed",
+          "source": "user-observed"
+        },
+        "0053C": {
+          "label": "[메이]",
+          "cells": 4,
+          "status": "confirmed",
+          "source": "user-observed"
+        }
+      }
+    },
+    "000003.MES": {
+      "92": {
+        "label": "[시드]",
+        "cells": 4,
+        "status": "confirmed",
+        "source": "user-observed"
+      },
+      "text_offsets": {
+        "004D6": {
+          "label": "[시드]",
+          "cells": 4,
+          "status": "confirmed",
+          "source": "user-observed"
+        },
+        "01CDD": {
+          "label": "[딕]",
+          "cells": 3,
+          "status": "confirmed",
+          "source": "user-observed"
+        },
+        "0027C": {
+          "label": "[시드]",
+          "cells": 4,
+          "status": "confirmed",
+          "source": "user-observed"
+        },
+        "02699": {
+          "label": "[빌리]",
+          "cells": 4,
+          "status": "confirmed",
+          "source": "user-observed"
+        },
+        "013C5": {
+          "label": "[리나]",
+          "cells": 4,
+          "status": "confirmed",
+          "source": "user-observed"
+        },
+        "014B2": {
+          "label": "[메이]",
+          "cells": 4,
+          "status": "confirmed",
+          "source": "user-observed"
+        },
+        "019A0": {
+          "label": "[리나]",
+          "cells": 4,
+          "status": "confirmed",
+          "source": "user-observed"
+        },
+        "019D7": {
+          "label": "[진]",
+          "cells": 3,
+          "status": "confirmed",
+          "source": "user-observed"
+        },
+        "019EB": {
+          "label": "[빌리]",
+          "cells": 4,
+          "status": "confirmed",
+          "source": "user-observed"
+        },
+        "019F9": {
+          "label": "[메이]",
+          "cells": 4,
+          "status": "confirmed",
+          "source": "user-observed"
+        }
+      }
+    }
+  }
+}

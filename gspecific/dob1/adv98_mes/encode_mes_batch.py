@@ -17,6 +17,7 @@ except (AttributeError, ValueError):
     pass
 
 PUNCT = {"0D": ",", "0E": "‥", "0F": ".", "10": " ", "11": "!", "12": "?"}
+REVIEWABLE_TEXT_RE = re.compile(r"[\u3041-\u3093\u30a1-\u30f6\u3400-\u4dbf\u4e00-\u9fff]")
 DISPLAY_LINE_CELLS = 31
 CLOSING_PUNCTUATION = "》〉」』】〕〗〙〛）］)]”’"
 
@@ -201,6 +202,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("workspace", nargs="?", type=Path, default=Path(r"C:\work_han\workspace2"))
     ap.add_argument("--no-dosbox-x", action="store_true")
+    ap.add_argument("--manifest-dir", type=Path, help="write per-MES patch manifests")
     ap.add_argument("--debug-offset", help="trace one source offset in 000046.MES")
     a = ap.parse_args(); root=a.workspace.resolve(); d=root/'script-pc98'/'MES'
     console = Console(); results = []
@@ -257,6 +259,9 @@ def main() -> int:
             if translation in (None, ''):
                 overlay['status'] = 'incomplete: untranslated overlay'
                 continue
+            if isinstance(translation, str) and translation.strip() == '@keep':
+                overlay['status'] = 'passed: keep original'
+                continue
             try:
                 encode_translation(translation, font_codes)
             except ValueError as exc:
@@ -271,6 +276,9 @@ def main() -> int:
             # would rewrite the translation and later edits would inherit a
             # shifted/incorrect space.
             source_translation = group.get('translation') or ''
+            if isinstance(source_translation, str) and source_translation.strip() == '@keep':
+                group['status'] = 'passed: keep original'
+                continue
             # Editing-only segment separators do not occupy a display cell.
             # Remove them before wrap-boundary calculation; otherwise every
             # later boundary can shift by one or more cells.
@@ -317,6 +325,21 @@ def main() -> int:
             if value.startswith('{') and '}' in value: value=value.split('}',1)[1]
             full_value = value
             markers = re.findall(r'\{([^{}]*)\}', full_value)
+            if len(original_markers) == len(translation_markers):
+                # Propagate speaker/spacing macros as well as punctuation.
+                # The JSON keeps all macro markers in source order; assigning
+                # them to command records prevents Japanese speaker labels
+                # such as ???: from surviving in the encoded MES.
+                marker_index = 0
+                for command_index in range(start_i, end_i):
+                    command = records[command_index]
+                    if command.get('type') != 'command' or not command.get('macro_slot'):
+                        continue
+                    if marker_index >= len(translation_markers):
+                        break
+                    if command.get('macro_slot') not in PUNCT:
+                        command['translation'] = translation_markers[marker_index]
+                    marker_index += 1
             if markers:
                 # Keep editing-only pipes while determining source-segment
                 # boundaries.  They are removed from ``normalized_translation``
@@ -408,15 +431,35 @@ def main() -> int:
             # Keep the last duplicate, matching by_offset's encoding target.
             unique_map[key] = r
         unique_text = list(unique_map.values())
+        # Empty ASCII overlays are fixed engine/UI literals (credits,
+        # SAVE/LOAD labels, etc.) and are intentionally left untranslated.
+        # Count only Japanese/CJK overlays as missing text; dialogue segments
+        # remain countable regardless of their character set.
+        covered_overlay_offsets = {
+            o.get('offset') for o in overlays
+            if str(o.get('status', '')).startswith('passed: covered by dialogue segment')
+        }
+        unique_text = [
+            r for r in unique_text
+            if r.get('offset') not in covered_overlay_offsets
+            and (
+                r.get('offset') in dialogue_offsets
+                or r.get('translation') not in (None, '')
+                or REVIEWABLE_TEXT_RE.search(r.get('original', ''))
+            )
+        ]
         total = len(unique_text)
         translated = sum(1 for r in unique_text if r.get('translation') not in (None, r.get('original')) or is_structural_literal(r.get('translation') or r.get('original', '')))
         coverage = (translated / total * 100) if total else 100.0
         if coverage < 100:
             group_by_offset = {s.get("offset"): d.get("id") for d in info.get("dialogues", []) for s in d.get("segments", [])}
-            missing = [r for r in unique_text if r.get("offset") in dialogue_offsets and r.get("translation") in (None, r.get("original")) and not is_structural_literal(r.get("translation") or r.get("original", ""))]
-            print(f"INCOMPLETE {stem}: {len(missing)} untranslated segment(s)")
-            for record in missing:
-                print(f"  {group_by_offset.get(record.get('offset'), 'unknown')} @ {record.get('offset')}: {record.get('original', '')}")
+            overlay_by_offset = {o.get("offset"): o.get("id", f"overlay:{o.get('offset')}") for o in overlays}
+            missing = [r for r in unique_text if r.get("translation") in (None, r.get("original")) and not is_structural_literal(r.get("translation") or r.get("original", ""))]
+            if missing:
+                print(f"INCOMPLETE {stem}: {len(missing)} untranslated segment(s)")
+                for record in missing:
+                    record_id = group_by_offset.get(record.get('offset')) or overlay_by_offset.get(record.get('offset'), 'unknown')
+                    print(f"  {record_id} @ {record.get('offset')}: {record.get('original', '')}")
         group_errors = [g for g in groups if str(g.get("status", "")).startswith("error")]
         group_incomplete = [g for g in groups if str(g.get("status", "")).startswith("incomplete")]
         if group_errors:
@@ -443,6 +486,7 @@ def main() -> int:
         source=root/'jpn-pc98'/'MES'/stem; output=root/'kor-pc98'/'MES'/stem
         try:
             cmd=[sys.executable,'-m','gspecific.dob1.adv98_mes.encode_mes',str(source),tmp,str(output),'font_table/font_table-kor-jin.json']
+            if a.manifest_dir: cmd += ['--patch-manifest', str((a.manifest_dir / f'{stem}.patches.json').resolve())]
             if a.debug_offset and stem == '000046.MES': cmd += ['--debug-offset', a.debug_offset]
             subprocess.run(cmd,check=True)
         except subprocess.CalledProcessError as exc:

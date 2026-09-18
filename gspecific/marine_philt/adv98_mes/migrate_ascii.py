@@ -48,7 +48,11 @@ def preserve_translations(old_info: dict, old_lang: dict, new_info: dict, new_la
                 if not safe_extension or old.get("translation") not in (None, "", "@keep"):
                     raise ValueError(f"changed translated range needs review: {offset}")
                 report["expanded"].append(offset)
-            generated = {key: deepcopy(target[key]) for key in ("original", "connections") if key in target}
+            generated = {
+                key: deepcopy(target[key])
+                for key in ("original", "connections", "combined_original")
+                if key in target
+            }
             target.update(deepcopy(old))
             target.update(generated)
             report["preserved"].append(offset)

@@ -54,11 +54,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("workspace", type=Path)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--output-dir", type=Path, help="write fresh JSON to a separate directory")
     args = parser.parse_args()
 
     workspace = args.workspace.resolve()
     source_dir = workspace / "jpn-pc98" / "MES"
-    output_dir = workspace / "script-pc98" / "MES"
+    output_dir = args.output_dir or workspace / "script-pc98" / "MES"
     sources = sorted(source_dir.glob("*.MES"))
     if not sources:
         raise ValueError(f"no MES files found: {source_dir}")

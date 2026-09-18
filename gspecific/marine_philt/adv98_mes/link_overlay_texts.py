@@ -7,6 +7,9 @@ import json
 from pathlib import Path
 
 
+NEXT_MARKER = "{next}"
+
+
 def annotate_connections(info: dict, lang: dict) -> None:
     entries = {
         entry["offset"]: entry
@@ -31,15 +34,28 @@ def annotate_connections(info: dict, lang: dict) -> None:
             and arguments[0].get("value") == value
         )
 
-    for before, wait, advance, after in zip(records, records[1:], records[2:], records[3:]):
-        if (
-            before.get("type") == after.get("type") == "text"
-            and is_call(wait, 4)
-            and is_call(advance, 0)
-        ):
-            left, right = before["offset"], after["offset"]
-            neighbors.setdefault(left, set()).add(right)
-            neighbors.setdefault(right, set()).add(left)
+    for index, before in enumerate(records):
+        if before.get("type") != "text":
+            continue
+        for gap, prefix_length in ((3, 0), (4, 1), (5, 1)):
+            if index + gap >= len(records):
+                continue
+            after = records[index + gap]
+            if after.get("type") != "text":
+                continue
+            wait_index = index + 1 + prefix_length
+            advance_index = wait_index + 1
+            if gap == 5:
+                spacer = records[index + 4]
+                if spacer.get("type") != "command" or spacer.get("opcode") != "C5":
+                    continue
+            if (
+                prefix_length == 0
+                or is_call(records[index + 1], 3)
+            ) and is_call(records[wait_index], 4) and is_call(records[advance_index], 0):
+                left, right = before["offset"], after["offset"]
+                neighbors.setdefault(left, set()).add(right)
+                neighbors.setdefault(right, set()).add(left)
 
     for overlay in lang.get("overlay_texts", []):
         start = overlay["offset"]
@@ -56,13 +72,62 @@ def annotate_connections(info: dict, lang: dict) -> None:
             if offset in entries
         ]
 
+    graph = {offset: set() for offset in entries}
+    for entry in entries.values():
+        for connection in entry.get("connections", []):
+            other = connection.get("offset")
+            if other in entries:
+                graph[entry["offset"]].add(other)
+                graph[other].add(entry["offset"])
+    visited: set[str] = set()
+    for start in sorted(graph, key=lambda value: int(value, 16)):
+        if start in visited:
+            continue
+        pending = [start]
+        component: set[str] = set()
+        while pending:
+            offset = pending.pop()
+            if offset in component:
+                continue
+            component.add(offset)
+            pending.extend(graph[offset] - component)
+        visited.update(component)
+        if len(component) < 2:
+            continue
+        ordered = sorted(component, key=lambda value: int(value, 16))
+        root = entries[ordered[0]]
+        root["combined_original"] = NEXT_MARKER.join(entries[offset]["original"] for offset in ordered)
+        root.pop("combined_segments", None)
+        translations = [entries[offset].get("translation", "") for offset in ordered]
+        marked_translation = any(NEXT_MARKER in translation for translation in translations)
+        if not marked_translation and any(translations):
+            root["translation"] = NEXT_MARKER.join(translations)
+            root["status"] = (
+                "passed"
+                if all(translations)
+                else "incomplete: connected translation"
+            )
+            for offset in ordered[1:]:
+                entries[offset]["translation"] = ""
+                entries[offset]["status"] = "linked: edit the earliest connected entry"
+        elif marked_translation:
+            for offset in ordered[1:]:
+                entries[offset]["translation"] = ""
+                entries[offset]["status"] = "linked: edit the earliest connected entry"
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("workspace", type=Path)
+    parser.add_argument("--files", nargs="+", metavar="JSON")
     args = parser.parse_args()
     changed = linked = 0
-    for path in sorted((args.workspace / "script-pc98" / "MES").glob("*_lang.json")):
+    paths = (
+        [args.workspace / "script-pc98" / "MES" / name for name in args.files]
+        if args.files
+        else sorted((args.workspace / "script-pc98" / "MES").glob("*_lang.json"))
+    )
+    for path in paths:
         lang = json.loads(path.read_text(encoding="utf-8"))
         if lang.get("format") != "marine-philt-adv98-mes-lang-v1":
             raise ValueError(f"unexpected format: {path}")

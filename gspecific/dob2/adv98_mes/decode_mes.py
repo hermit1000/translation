@@ -40,7 +40,7 @@ def make_records(tokens: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return records
 
 
-def decode_document(source: Path, source_name: str, *, structured_ascii: bool = False) -> dict[str, Any]:
+def decode_document(source: Path, source_name: str, *, structured_ascii: bool = True) -> dict[str, Any]:
     data = source.read_bytes()
     tokens = decode_mes(data, structured_ascii=structured_ascii)
     records = make_records(tokens)
@@ -57,6 +57,7 @@ def decode_document(source: Path, source_name: str, *, structured_ascii: bool = 
         "source": source_name,
         "source_size": len(data),
         "source_sha256": hashlib.sha256(data).hexdigest(),
+        "structured_ascii": structured_ascii,
         "warning": "Provisional DOB2 lexical decode; review candidates before reinsertion.",
         "text_record_count": sum(record["type"] == "text" for record in records),
         "translation_candidate_count": len(candidates),
@@ -65,7 +66,7 @@ def decode_document(source: Path, source_name: str, *, structured_ascii: bool = 
     }
 
 
-def write_decoded(input_path: Path, output_path: Path, force: bool, *, structured_ascii: bool = False) -> int:
+def write_decoded(input_path: Path, output_path: Path, force: bool, *, structured_ascii: bool = True) -> int:
     input_path = input_path.resolve()
     output_path = output_path.resolve()
     if input_path.is_file():
@@ -104,7 +105,7 @@ def main() -> int:
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--structured-ascii", action="store_true",
+    parser.add_argument("--structured-ascii", action=argparse.BooleanOptionalAction, default=True,
                         help="parse confirmed 21 ASCII 00 output spans before lexical heuristics")
     args = parser.parse_args()
     return write_decoded(args.input, args.output, args.force, structured_ascii=args.structured_ascii)

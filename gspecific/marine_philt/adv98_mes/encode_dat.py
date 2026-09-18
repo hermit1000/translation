@@ -3,7 +3,8 @@
 from __future__ import annotations
 import argparse, hashlib, json, shutil
 from pathlib import Path
-from gspecific.dob1.adv98_mes.translation_codec import load_font_codes, encode_translation
+from gspecific.adv_common.text import load_font_codes, encode_translation
+from gspecific.adv_common.patches import apply_replacements
 
 def wrap_paragraph(text: str, records: list[dict]) -> list[str]:
     """Wrap one paragraph into the original line count and available widths."""
@@ -85,8 +86,8 @@ def main() -> int:
         # OPEN.DAT uses U+3000 for visual indentation.  The project font
         # table represents that full-width blank as ``_`` (code 8140).
         encoded_text = text.replace("　", "_")
-        replacements.append((start,end,encode_translation(encoded_text,codes))); entry["status"]="passed"
-    for start,end,repl in sorted(replacements, reverse=True): source=source[:start]+repl+source[end+1:]
+        replacements.append((start,end,encode_translation(encoded_text,codes,forbidden_control_pairs=frozenset()))); entry["status"]="passed"
+    source = apply_replacements(source, replacements)
     a.output_dat.parent.mkdir(parents=True,exist_ok=True); a.output_dat.write_bytes(source)
     if not a.no_dosbox_x and a.output_dat.parent.parent.name.lower() == "kor-pc98":
         workspace = a.output_dat.parent.parent.parent

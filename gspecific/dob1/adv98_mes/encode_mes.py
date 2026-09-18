@@ -16,7 +16,7 @@ except ImportError:
     from decode_mes import decode_mes
 
 
-from gspecific.adv_common.patches import apply_replacements
+from gspecific.adv_common.patches import apply_replacements, write_patch_manifest
 
 
 def main() -> int:
@@ -27,7 +27,12 @@ def main() -> int:
     parser.add_argument("output_mes", type=Path, nargs="?", default=workspace / "kor-pc98/MES/OPEN_1.MES")
     parser.add_argument("font_table", type=Path, nargs="?", default=Path("font_table/font_table-kor-jin.json"))
     parser.add_argument("--debug-offset", help="print replacement details for one source offset (hex)")
+    parser.add_argument("--patch-manifest", type=Path, help="record exact allowed byte replacements for validation")
     args = parser.parse_args()
+    if args.patch_manifest and args.patch_manifest.resolve() in {
+        p.resolve() for p in (args.source_mes, args.translation_json, args.output_mes, args.font_table)
+    }:
+        raise ValueError("patch manifest must use a separate path")
 
     document = json.loads(args.translation_json.read_text(encoding="utf-8"))
     source = args.source_mes.read_bytes()
@@ -35,6 +40,7 @@ def main() -> int:
         raise ValueError("source MES SHA-256 does not match the translation JSON")
     codes = load_font_codes(args.font_table)
     replacements: list[tuple[int, int, bytes]] = []
+    replacement_kinds: dict[tuple[int, int], str] = {}
     catalog = json.loads((Path(__file__).with_name("macro_catalog.json")).read_text(encoding="utf-8"))["macros"]
     overrides_path = Path(__file__).with_name("file_macro_overrides.json")
     if overrides_path.exists():
@@ -69,7 +75,10 @@ def main() -> int:
         # as Shift-JIS and therefore appear as U+FFFD in *_info.json.  The
         # offset/end range still identifies the source bytes unambiguously;
         # skip re-encoding only for those records and retain the raw range.
-        if "\ufffd" in original:
+        if "raw_hex" in record:
+            if actual != bytes.fromhex(record["raw_hex"]):
+                raise ValueError(f"source bytes mismatch at {start:05X}-{end:05X}")
+        elif "\ufffd" in original:
             if not actual:
                 raise ValueError(f"source range is empty at {start:05X}-{end:05X}")
         else:
@@ -165,6 +174,7 @@ def main() -> int:
                 encoded_lines.append(line)
             replacements.append((start, end, b"\xA5".join(encoded_lines)))
             credit_ranges.append((start, end))
+            replacement_kinds[(start, end)] = "adapter"
 
     for record in document.get("extra_texts", []):
         if record.get("translation") in (None, ""):
@@ -207,6 +217,7 @@ def main() -> int:
         if preserve_boundary_macro(start, end):
             continue
         replacements.append((start, end, encode_translation(translation, codes)))
+        replacement_kinds[(start, end)] = "macro"
 
     replacements.sort()
     # Inventory/choice labels in these two room scripts are emitted from a
@@ -251,6 +262,9 @@ def main() -> int:
                 f"and {current[0]:05X}-{current[1]:05X}"
             )
     rebuilt = apply_replacements(source, replacements)
+    if args.patch_manifest:
+        write_patch_manifest(args.patch_manifest, source, rebuilt, replacements,
+                             replacement_kinds=replacement_kinds)
     args.output_mes.parent.mkdir(parents=True, exist_ok=True)
     args.output_mes.write_bytes(rebuilt)
     print(

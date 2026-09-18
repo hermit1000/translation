@@ -62,13 +62,14 @@ def main() -> int:
         source = source_root / name
         if not source.is_file():
             raise FileNotFoundError(source)
+        file_output = output / source.name
         modes = observed.get(source.name.upper(), Counter())
         output_mode = args.mode
         if output_mode is None:
             output_mode = modes.most_common(1)[0][0] if modes else 1
         decoded = write_artifacts(
             source,
-            output,
+            file_output,
             output_mode=output_mode,
             observed_modes=dict(modes),
         )

@@ -11,6 +11,7 @@ from pathlib import Path
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--manifest-dir", type=Path, help="write per-script patch manifests")
     parser.add_argument(
         "workspace",
         type=Path,
@@ -71,6 +72,8 @@ def main() -> int:
             str(output),
             str(font_table),
         ]
+        if args.manifest_dir:
+            command += ["--patch-manifest", str((args.manifest_dir / f"{name}.patches.json").resolve())]
         print(f"[{encoded + failures + 1}/{len(names)}] {name}")
         result = subprocess.run(command, cwd=Path(__file__).resolve().parents[3])
         if result.returncode:

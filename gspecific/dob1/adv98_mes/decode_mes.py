@@ -290,7 +290,7 @@ def make_readable_records(tokens: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "text": "".join(str(item["value"]) for item in group),
                     "raw_hex": " ".join(f"{byte:02X}" for byte in raw),
                     "encodings": sorted({item.get("encoding", "unknown") for item in group}),
-                    "translation_candidate": len(group) >= 2,
+                    "translation_candidate": len(group) >= 2 or any(item.get("display_text") for item in group),
                 }
             )
             continue
@@ -341,6 +341,7 @@ def make_readable_records(tokens: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def diagnostic_main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="MES file to decode")
+    parser.add_argument("--structured-ascii", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--json", action="store_true", help="write structured JSON")
     parser.add_argument(
         "--readable-json",
@@ -355,7 +356,7 @@ def diagnostic_main() -> int:
     args = parser.parse_args()
 
     data = args.input.read_bytes()
-    tokens = decode_mes(data)
+    tokens = decode_mes(data, ascii_output=args.structured_ascii)
     readable_records = make_readable_records(tokens)
     if args.dialogue_json:
         candidates = [
@@ -452,9 +453,9 @@ def annotate_records(records: list[dict[str, Any]]) -> None:
                         record["macro_preview"] = definition["original"]
 
 
-def decode_document(source: Path, source_name: str) -> dict[str, Any]:
+def decode_document(source: Path, source_name: str, *, structured_ascii: bool = True) -> dict[str, Any]:
     data = source.read_bytes()
-    tokens = decode_mes(data)
+    tokens = decode_mes(data, ascii_output=structured_ascii)
     verify_tokens(data, tokens)
     records = make_readable_records(tokens)
     annotate_records(records)
@@ -464,6 +465,7 @@ def decode_document(source: Path, source_name: str) -> dict[str, Any]:
         "source": source_name,
         "source_size": len(data),
         "source_sha256": hashlib.sha256(data).hexdigest(),
+        "structured_ascii": structured_ascii,
         "warning": "Provisional lexical decode; review translation candidates manually.",
         "text_record_count": sum(r["type"] == "text" for r in records),
         "translation_candidate_count": sum(
@@ -473,7 +475,7 @@ def decode_document(source: Path, source_name: str) -> dict[str, Any]:
     }
 
 
-def write_decoded_json(input_path: Path, output_path: Path, force: bool) -> int:
+def write_decoded_json(input_path: Path, output_path: Path, force: bool, *, structured_ascii: bool = True) -> int:
     input_path = input_path.resolve()
     output_path = output_path.resolve()
     if input_path.is_file():
@@ -500,7 +502,7 @@ def write_decoded_json(input_path: Path, output_path: Path, force: bool) -> int:
     for (source, relative), destination in zip(sources, destinations):
         if destination.exists() and not force:
             raise FileExistsError(f"output exists; pass --force: {destination}")
-        document = decode_document(source, relative.as_posix())
+        document = decode_document(source, relative.as_posix(), structured_ascii=structured_ascii)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(
             json.dumps(document, ensure_ascii=False, indent=2) + "\n",
@@ -518,13 +520,14 @@ def main() -> int:
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path, nargs="?")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--structured-ascii", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--readable-json", action="store_true")
     parser.add_argument("--dialogue-json", action="store_true")
     args = parser.parse_args()
     if args.output is None:
         return diagnostic_main()
-    return write_decoded_json(args.input, args.output, args.force)
+    return write_decoded_json(args.input, args.output, args.force, structured_ascii=args.structured_ascii)
 
 
 if __name__ == "__main__":

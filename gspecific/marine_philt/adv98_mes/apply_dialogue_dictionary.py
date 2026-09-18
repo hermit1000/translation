@@ -52,7 +52,8 @@ def main() -> int:
         changes = 0
         for section in SECTIONS:
             for item in document.get(section, []):
-                candidate = candidates.get(item.get("original"))
+                key = item.get("combined_original") or item.get("original")
+                candidate = candidates.get(key)
                 current = item.get("translation")
                 if candidate is None or candidate == current:
                     continue

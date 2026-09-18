@@ -16,19 +16,18 @@ from rich.console import Console
 def add_pair(dictionary: dict, original: str, translation: str, reference: str) -> None:
     if not isinstance(original, str) or not original.strip():
         return
-    if not isinstance(translation, str) or not translation.strip():
+    if not isinstance(translation, str):
         return
     entry = dictionary.setdefault(
         original,
-        {"count": 0, "reference": 0, "translated": [], "references": []},
+        {"count": 0, "reference": 0, "translated": [], "references": [],
+         "keep": 0, "keep_references": []},
     )
     entry["reference"] += 1
     entry["references"].append(reference)
     if translation not in entry["translated"]:
         entry["translated"].append(translation)
         entry["count"] = len(entry["translated"])
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", type=int, default=2, help="workspace number (default: 2)")
@@ -60,11 +59,12 @@ def main() -> int:
                     continue
                 groups += 1
                 file_groups += 1
-                if isinstance(group.get("translation"), str) and group["translation"].strip():
+                translation = group.get("translation")
+                if isinstance(translation, str) and translation.strip():
                     translated_groups += 1
                     file_translated += 1
                 identifier = group.get("id") or f"overlay:{group.get('offset', '')}"
-                add_pair(dictionary, group.get("original"), group.get("translation"), f"{path.name}:{identifier}")
+                add_pair(dictionary, group.get("original"), translation, f"{path.name}:{identifier}")
         file_percent = (file_translated / file_groups * 100) if file_groups else 100.0
         overall_percent = (translated_groups / groups * 100) if groups else 100.0
         console.print(
@@ -76,7 +76,11 @@ def main() -> int:
             style="green" if overall_percent >= 100 else "yellow",
         )
 
-    annoying = {key: value for key, value in dictionary.items() if value["count"] > 1}
+    annoying = {
+        key: {"translated": value["translated"]}
+        for key, value in dictionary.items()
+        if value["count"] > 1
+    }
     dictionary_path = base / "dictionary.json"
     annoying_path = base / "annoying.json"
     for path, payload in ((dictionary_path, dictionary), (annoying_path, annoying)):

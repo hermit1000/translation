@@ -8,7 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from gspecific.adv_common.patches import apply_replacements
+from gspecific.adv_common.patches import apply_replacements, write_patch_manifest
 from gspecific.adv_common.text import (
     encode_adv98_text,
     encode_translation,
@@ -33,12 +33,14 @@ def normalize_control08_speaker_translation(value: str) -> str:
     return value
 
 
-def trim_wrap_boundary_spaces(value: str, width: int | None = None) -> str:
+def trim_wrap_boundary_spaces(
+    value: str, width: int | None = None, *, initial_cells: int = 0
+) -> str:
     """Remove spaces at the first cell after each configured display line."""
     if width is None:
         width = DISPLAY_LINE_CELLS
     output: list[str] = []
-    cells = 0
+    cells = initial_cells
     for character in value:
         if character == " " and cells > 0 and cells % (width - 1) == 0:
             continue
@@ -54,18 +56,28 @@ def encode_record_translation(
     original: str, translation: str, codes: dict[str, str], raw: bytes | None = None,
     *, width: int = DISPLAY_LINE_CELLS,
     speaker_repairs: bool = True,
+    initial_cells: int = 0,
+    one_byte_codes: dict[str, int] | None = None,
 ) -> bytes:
     """Preserve DOB2 inline ASCII controls and encode only their display text."""
     for prefix in PRESERVED_ASCII_PREFIXES:
         if original.startswith(prefix) and translation.startswith(prefix):
-            display_text = trim_wrap_boundary_spaces(translation[len(prefix) :], width)
-            return prefix.encode("ascii") + encode_translation(display_text, codes)
+            display_text = trim_wrap_boundary_spaces(
+                translation[len(prefix) :], width, initial_cells=initial_cells
+            )
+            return prefix.encode("ascii") + encode_translation(display_text, codes, one_byte_codes=one_byte_codes)
     if not speaker_repairs:
-        return encode_translation(trim_wrap_boundary_spaces(translation, width), codes)
+        return encode_translation(
+            trim_wrap_boundary_spaces(translation, width, initial_cells=initial_cells),
+            codes, one_byte_codes=one_byte_codes,
+        )
     if raw is not None and len(raw) >= 3 and raw[1:3] == bytes.fromhex("81 6D"):
         # CONTROL_08's one-byte speaker ID precedes the source opening bracket.
         display_text = normalize_control08_speaker_translation(translation)
-        return raw[:1] + encode_translation(trim_wrap_boundary_spaces(display_text, width), codes)
+        return raw[:1] + encode_translation(
+            trim_wrap_boundary_spaces(display_text, width, initial_cells=initial_cells),
+            codes, one_byte_codes=one_byte_codes,
+        )
     # After CONTROL_08, the one-byte compressed glyph before ``［`` is the
     # speaker-ID parameter, not dialogue text. Preserve it for the engine,
     # while replacing the visible Japanese speaker label with the translation.
@@ -77,7 +89,8 @@ def encode_record_translation(
     )
     if len(original) >= 2 and original[1] == "［" and compressed_parameter:
         return encode_adv98_text(original[0]) + encode_translation(
-            trim_wrap_boundary_spaces(translation, width), codes
+            trim_wrap_boundary_spaces(translation, width, initial_cells=initial_cells),
+            codes, one_byte_codes=one_byte_codes,
         )
     # In the complementary form, CONTROL_08 has already consumed the lead
     # byte of a two-byte ``［`` parameter (81), leaving its 6D trail byte at
@@ -91,7 +104,8 @@ def encode_record_translation(
                 close_index = translation.index(closing, 1)
                 display_text = translation[1:close_index] + "]" + translation[close_index + 1 :]
         return encode_adv98_text(original[0]) + encode_translation(
-            trim_wrap_boundary_spaces(display_text, width), codes
+            trim_wrap_boundary_spaces(display_text, width, initial_cells=initial_cells),
+            codes, one_byte_codes=one_byte_codes,
         )
     bracket_positions = [original.find(mark) for mark in ("［", "］", "[", "]")]
     bracket_positions = [position for position in bracket_positions if position >= 0]
@@ -102,12 +116,21 @@ def encode_record_translation(
             # Japanese text before a speaker bracket is a stray/merged marker;
             # omit it from the encoded dialogue as well as visible text.
             display_text = translation[len(prefix) :] if translation.startswith(prefix) else translation
-            return encode_translation(trim_wrap_boundary_spaces(display_text, width), codes)
-    return encode_translation(trim_wrap_boundary_spaces(translation, width), codes)
+            return encode_translation(
+                trim_wrap_boundary_spaces(display_text, width, initial_cells=initial_cells),
+                codes, one_byte_codes=one_byte_codes,
+            )
+    return encode_translation(
+        trim_wrap_boundary_spaces(translation, width, initial_cells=initial_cells),
+        codes, one_byte_codes=one_byte_codes,
+    )
 
 
-def main(*, width: int = DISPLAY_LINE_CELLS, speaker_repairs: bool = True) -> int:
+def main(*, width: int = DISPLAY_LINE_CELLS, speaker_repairs: bool = True,
+         preprocess_lang=None, postprocess_lang=None,
+         default_marine_remap=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--patch-manifest", type=Path, help="record exact allowed byte replacements for validation")
     parser.add_argument("source_mes", type=Path)
     parser.add_argument("info_json", type=Path)
     parser.add_argument("lang_json", type=Path)
@@ -118,11 +141,17 @@ def main(*, width: int = DISPLAY_LINE_CELLS, speaker_repairs: bool = True) -> in
         nargs="?",
         default=Path("font_table/font_table-kor-jin.json"),
     )
+    parser.add_argument("--marine-remap", type=Path, default=default_marine_remap)
     args = parser.parse_args()
+    if args.patch_manifest and args.patch_manifest.resolve() in {
+        p.resolve() for p in (args.source_mes, args.info_json, args.lang_json, args.output_mes, args.font_table)
+    }:
+        raise ValueError("patch manifest must use a separate path")
 
     source = args.source_mes.read_bytes()
     info = json.loads(args.info_json.read_text(encoding="utf-8"))
     lang = json.loads(args.lang_json.read_text(encoding="utf-8"))
+    preprocess_result = preprocess_lang(info, lang) if preprocess_lang is not None else None
     if hashlib.sha256(source).hexdigest() != info["source_sha256"]:
         raise ValueError("source MES SHA-256 does not match info JSON")
     if lang.get("source_info") != args.info_json.name:
@@ -130,6 +159,7 @@ def main(*, width: int = DISPLAY_LINE_CELLS, speaker_repairs: bool = True) -> in
 
     records = {record.get("offset"): record for record in info["records"]}
     codes = None
+    one_byte_codes = None
     replacements: list[tuple[int, int, bytes]] = []
     editable_entries = [
         *(lang.get("dialogue_groups", [])),
@@ -159,6 +189,9 @@ def main(*, width: int = DISPLAY_LINE_CELLS, speaker_repairs: bool = True) -> in
             continue
         if codes is None:
             codes = load_font_codes(args.font_table)
+            if args.marine_remap is not None:
+                from gspecific.adv_common.text import load_marine_remap
+                one_byte_codes = load_marine_remap(args.marine_remap)
         try:
             # Normalize only the encoded MES value.  Keep the editable JSON
             # exactly as entered so later translation work does not inherit
@@ -176,16 +209,28 @@ def main(*, width: int = DISPLAY_LINE_CELLS, speaker_repairs: bool = True) -> in
                 # translated 〔 glyph replaces the complete bracket pair.
                 translation = normalize_control08_speaker_translation(translation)
                 translation = translation.translate(str.maketrans({"[": "〔", "]": "〕"}))
-                encoded = encode_translation(trim_wrap_boundary_spaces(translation, width), codes)
+                encoded = encode_translation(
+                    trim_wrap_boundary_spaces(translation, width),
+                    codes,
+                    one_byte_codes=one_byte_codes,
+                )
                 start -= 1
             else:
-                encoded = encode_record_translation(record["original"], translation, codes, expected,
-                                                    width=width, speaker_repairs=speaker_repairs)
+                encoded = encode_record_translation(
+                    record["original"], translation, codes, expected,
+                    width=width,
+                    speaker_repairs=speaker_repairs,
+                    initial_cells=int(entry.get("_display_prefix_cells", 0)),
+                    one_byte_codes=one_byte_codes,
+                )
         except ValueError as exc:
             entry["status"] = f"error: {exc}"
             raise
         replacements.append((start, end, encoded))
         entry["status"] = "passed"
+
+    for start, end in (preprocess_result or {}).get("skip_ranges", []):
+        replacements.append((start, end, b""))
 
     replacements.sort()
     for previous, current in zip(replacements, replacements[1:]):
@@ -198,23 +243,15 @@ def main(*, width: int = DISPLAY_LINE_CELLS, speaker_repairs: bool = True) -> in
             f"encoded CAL exceeds its fixed source allocation: "
             f"{len(rebuilt)} > {len(source)} bytes"
         )
+    if args.patch_manifest:
+        write_patch_manifest(args.patch_manifest, source, rebuilt, replacements)
     args.output_mes.parent.mkdir(parents=True, exist_ok=True)
     args.output_mes.write_bytes(rebuilt)
+    if postprocess_lang is not None:
+        postprocess_lang(info, lang)
     lang_text = json.dumps(lang, ensure_ascii=False, indent=2) + "\n"
     args.lang_json.write_text(
         lang_text.replace("\n", "\r\n"), encoding="utf-8", newline=""
-    )
-    print(
-        json.dumps(
-            {
-                "output": str(args.output_mes.resolve()),
-                "source_size": len(source),
-                "output_size": len(rebuilt),
-                "replacements": len(replacements),
-                "size_delta": len(rebuilt) - len(source),
-            },
-            indent=2,
-        )
     )
     return 0
 

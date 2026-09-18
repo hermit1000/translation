@@ -165,10 +165,18 @@ def planar_rows_to_indices(
 
 
 def apply_output_mode(rows: list[bytes], output_mode: int) -> list[bytes]:
-    """Validate the VRAM output mode without altering decoded image rows."""
+    """Undo ADV98's cumulative row XOR before either mode writes VRAM."""
     if output_mode not in (0, 1):
         raise ValueError(f"unsupported GPC output mode {output_mode}")
-    return rows
+
+    output = []
+    previous = None
+    for row in rows:
+        if previous is not None:
+            row = bytes(current ^ prior for current, prior in zip(row, previous))
+        output.append(row)
+        previous = row
+    return output
 
 
 def decode_gpc(data: bytes, *, output_mode: int = 0) -> GPCImage:
@@ -330,7 +338,7 @@ def write_artifacts(
 
 def collect_gpc_output_modes(mes_root: Path) -> dict[str, Counter[int]]:
     """Collect C9/CF file and output-mode pairs from lexical MES decoding."""
-    from gspecific.dob1.adv98_mes.mes_decode import decode_mes
+    from gspecific.dob1.adv98_mes.decode_mes import decode_mes
 
     usage: defaultdict[str, Counter[int]] = defaultdict(Counter)
     for path in sorted(mes_root.glob("*.MES")):
