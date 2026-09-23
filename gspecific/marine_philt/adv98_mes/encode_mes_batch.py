@@ -21,8 +21,11 @@ def main() -> int:
         help="Marine compressed glyph remap table (enabled by default)",
     )
     parser.add_argument("--no-dosbox-x", action="store_true")
-    parser.add_argument("--allow-oversize-segments", action="store_true",
-                        help="warn instead of stopping for {next} segments over 81 cells")
+    parser.add_argument(
+        "--allow-oversize-segments",
+        action="store_true",
+        help="warn instead of stopping for {next} segments over 81 cells",
+    )
     parser.add_argument("--manifest-dir", type=Path, help="write per-MES patch manifests")
     args = parser.parse_args()
     workspace = args.workspace.resolve()
@@ -31,7 +34,28 @@ def main() -> int:
     output_dir = workspace / "kor-pc98" / "MES"
     names = args.files or [path.name for path in sorted(source_dir.glob("*.MES"))]
     failures = encoded = 0
+
+    # Debug-only index range: 1-based and inclusive, matching the loop display.
+    # Examples: (4, 4) encodes only the 4th item; (4, 8) encodes items 4 through 8.
+    # Leave both as None to encode the complete list.
+    DEBUG_INDEX_RANGE = (None, None)
+    # DEBUG_INDEX_RANGE = (99, 99)
+    DEBUG_INDEX_RANGE = (134, 134)
+    debug_start, debug_end = DEBUG_INDEX_RANGE
+    if debug_start is not None or debug_end is not None:
+        start = 1 if debug_start is None else debug_start
+        end = len(names) if debug_end is None else debug_end
+        if start < 1 or start > end or end > len(names):
+            raise ValueError(
+                f"invalid DEBUG_INDEX_RANGE={DEBUG_INDEX_RANGE}; expected 1 <= start <= end <= {len(names)}"
+            )
+    else:
+        start = 1
+        end = len(names)
+
     for index, name in enumerate(names, 1):
+        if not start <= index <= end:
+            continue
         source = source_dir / name
         info = script_dir / f"{name}_info.json"
         lang = script_dir / f"{name}_lang.json"
@@ -42,9 +66,16 @@ def main() -> int:
             return 1
         output = output_dir / name
         command = [
-            sys.executable, "-m", "gspecific.marine_philt.adv98_mes.encode_mes",
-            str(source), str(info), str(lang), str(output), str(args.font_table.resolve()),
-            "--marine-remap", str(args.marine_remap.resolve()),
+            sys.executable,
+            "-m",
+            "gspecific.marine_philt.adv98_mes.encode_mes",
+            str(source),
+            str(info),
+            str(lang),
+            str(output),
+            str(args.font_table.resolve()),
+            "--marine-remap",
+            str(args.marine_remap.resolve()),
         ]
         if args.allow_oversize_segments:
             command.append("--allow-oversize-segments")

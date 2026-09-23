@@ -52,6 +52,11 @@ def main() -> int:
                     continue
                 if value.strip():
                     translated += 1
+                else:
+                    # Normalize untranslated entries for the reusable
+                    # dictionary.  This prevents the same source from being
+                    # represented by both "" and "@keep".
+                    value = "@keep"
                 original = source_text(item)
                 if not isinstance(original, str) or not original.strip():
                     continue

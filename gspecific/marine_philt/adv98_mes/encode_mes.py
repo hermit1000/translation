@@ -24,6 +24,34 @@ CATALOG_PATH = Path(__file__).resolve().parents[1] / "speaker_control_catalog.js
 MARINE_REMAP_PATH = Path(__file__).resolve().parents[1] / "marine_compact_font_mapping_top20.json"
 
 
+def patch_staff_credit_layout(info: dict[str, Any], data: bytes) -> bytes:
+    """Move the STAFF technical-adviser block left by two fullwidth cells.
+
+    The leading spaces are a non-editable layout record. Adjust the preceding
+    cursor-position command instead of changing the record length, because MES
+    contains position-sensitive offsets after this block.
+    """
+    if Path(str(info.get("source", ""))).name.upper() != "STAFF_CR.MES":
+        return data
+    marker = bytes.fromhex(
+        "AC 29 04 58 23 AA 23 81 40 81 40 81 40 81 40 21 "
+        "54 45 43 48 4E 49 43 41 4C 20 41 44 56 49 53 45 52"
+    )
+    replacement = bytes.fromhex(
+        "AC 29 03 58 23 AA 23 81 40 81 40 81 40 81 40 21 "
+        "54 45 43 48 4E 49 43 41 4C 20 41 44 56 49 53 45 52"
+    )
+    occurrences = data.count(marker)
+    if occurrences != 1:
+        raise ValueError(
+            f"STAFF_CR technical-adviser layout marker count is {occurrences}, expected 1"
+        )
+    patched = data.replace(marker, replacement, 1)
+    # Keep the two standalone RUSH-TEAM records and their line controls, but
+    # blank only the labels so the three-name credit layout remains intact.
+    return patched.replace(b"(RUSH-TEAM)", b" " * len("(RUSH-TEAM)"))
+
+
 def load_control_speaker_catalog() -> dict[str, Any]:
     if not CATALOG_PATH.is_file():
         return {"unknown_policy": "warn_and_use_zero", "files": {}}
@@ -33,6 +61,7 @@ def load_control_speaker_catalog() -> dict[str, Any]:
 def control_speaker_cells(
     info: dict[str, Any], record: dict[str, Any], catalog: dict[str, Any],
     *, text_offset: str | None = None,
+    translation_preview: str | None = None,
 ) -> int:
     source_name = Path(str(info.get("source", ""))).name
     file_catalog = catalog.get("files", {}).get(source_name, {})
@@ -50,21 +79,12 @@ def control_speaker_cells(
     item = file_catalog.get(control_id)
     if item is not None:
         return int(item["cells"])
-    text_original = ""
-    if text_offset:
-        text_record = next(
-            (candidate for candidate in info.get("records", [])
-             if candidate.get("offset") == text_offset),
-            None,
-        )
-        if text_record is not None:
-            text_original = str(text_record.get("original", ""))
-    preview = text_original.replace("\r", " ").replace("\n", " ")[:40]
+    preview = (translation_preview or "").replace("\r", " ").replace("\n", " ")[:40]
     print(
         f"WARNING: unknown Marine control speaker {source_name} 08 {control_id} "
         f"before {text_offset or '?'}; "
         f"reserving {SPEAKER_RESERVE_CELLS} prefix cells"
-        + (f"; original={preview!r}" if preview else ""),
+        + (f"; translation={preview!r}" if preview else ""),
         file=sys.stderr,
     )
     return SPEAKER_RESERVE_CELLS
@@ -111,9 +131,36 @@ def annotate_control_speaker_cells(info: dict[str, Any], lang: dict[str, Any]) -
                     speaker_record = record
                     break
             if speaker_record is not None:
-                entry["_display_prefix_cells"] = control_speaker_cells(
-                    info, speaker_record, catalog, text_offset=entry.get("offset")
+                source_name = Path(str(info.get("source", ""))).name
+                text_item = (
+                    catalog.get("files", {})
+                    .get(source_name, {})
+                    .get("text_offsets", {})
+                    .get(entry.get("offset"))
                 )
+                if text_item is not None:
+                    entry["_display_prefix_cells"] = int(text_item["cells"])
+                else:
+                    entry["_display_prefix_cells"] = control_speaker_cells(
+                        info,
+                        speaker_record,
+                        catalog,
+                        text_offset=entry.get("offset"),
+                        translation_preview=value,
+                    )
+            else:
+                # Some Marine dialogue records render a speaker label without
+                # an immediately preceding 08 xx record. Use a confirmed
+                # per-text catalog entry for line-boundary calculations.
+                source_name = Path(str(info.get("source", ""))).name
+                text_item = (
+                    catalog.get("files", {})
+                    .get(source_name, {})
+                    .get("text_offsets", {})
+                    .get(entry.get("offset"))
+                )
+                if text_item is not None:
+                    entry["_display_prefix_cells"] = int(text_item["cells"])
 
 
 def prepare_connected_translations(
@@ -292,7 +339,10 @@ def restore_connected_translations(info: dict[str, Any], lang: dict[str, Any]) -
             combined = entry.pop("_next_combined_translation", None)
             root = entry.pop("_next_restore_root", None)
             if root is not None and entry["offset"] != root:
-                entry["translation"] = ""
+                # Linked child cells are encoded from the root's {next}
+                # translation. Keep an explicit marker in the editable JSON
+                # instead of exposing an apparently missing translation.
+                entry["translation"] = "@keep"
                 entry["status"] = "linked: edit the earliest connected entry"
             elif combined is not None:
                 entry["translation"] = combined
@@ -335,6 +385,7 @@ def main() -> int:
             suppress_trailing_control_offset=suppress_control_offset,
         ),
         postprocess_lang=restore_connected_translations,
+        postprocess_output=patch_staff_credit_layout,
         default_marine_remap=MARINE_REMAP_PATH,
     )
 

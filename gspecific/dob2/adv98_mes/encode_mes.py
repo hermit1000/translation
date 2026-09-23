@@ -128,6 +128,7 @@ def encode_record_translation(
 
 def main(*, width: int = DISPLAY_LINE_CELLS, speaker_repairs: bool = True,
          preprocess_lang=None, postprocess_lang=None,
+         postprocess_output=None,
          default_marine_remap=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--patch-manifest", type=Path, help="record exact allowed byte replacements for validation")
@@ -238,6 +239,8 @@ def main(*, width: int = DISPLAY_LINE_CELLS, speaker_repairs: bool = True,
             raise ValueError("translation ranges overlap")
 
     rebuilt = apply_replacements(source, replacements)
+    if postprocess_output is not None:
+        rebuilt = postprocess_output(info, rebuilt)
     if args.source_mes.suffix.upper() == ".CAL" and len(rebuilt) > len(source):
         raise ValueError(
             f"encoded CAL exceeds its fixed source allocation: "
