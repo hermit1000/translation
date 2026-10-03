@@ -8,8 +8,8 @@ import hashlib
 import json
 from pathlib import Path
 
-from gspecific.adv_common.patches import apply_replacements, write_patch_manifest
-from gspecific.adv_common.text import (
+from mes.adv_common.patches import apply_replacements, write_patch_manifest
+from mes.adv_common.text import (
     encode_adv98_text,
     encode_translation,
     load_font_codes,
@@ -19,6 +19,25 @@ from gspecific.adv_common.text import (
 KEEP_ORIGINAL = "@keep"
 DISPLAY_LINE_CELLS = 31
 PRESERVED_ASCII_PREFIXES = ("se &", "se $", "se '")
+
+
+def leading_quoted_control(raw: bytes | None) -> bytes:
+    """Return a leading quoted ADV98 layout command, if present.
+
+    Older Dracula info files folded quoted layout commands such as
+    ``"P 2 33 0"`` into the following text record.  The command is source
+    structure, not editable display text, so preserve its original bytes
+    while encoding only the normalized translation body.
+    """
+    if not raw or raw[:1] != b'"':
+        return b""
+    closing = raw.find(b'"', 1)
+    if closing < 0:
+        return b""
+    command = raw[1:closing]
+    if not command or any(value < 0x20 or value > 0x7E for value in command):
+        return b""
+    return raw[: closing + 1]
 
 
 def normalize_control08_speaker_translation(value: str) -> str:
@@ -34,15 +53,21 @@ def normalize_control08_speaker_translation(value: str) -> str:
 
 
 def trim_wrap_boundary_spaces(
-    value: str, width: int | None = None, *, initial_cells: int = 0
+    value: str, width: int | None = None, *, initial_cells: int = 0,
+    preserve_boundary_runs: bool = False,
 ) -> str:
     """Remove spaces at the first cell after each configured display line."""
     if width is None:
         width = DISPLAY_LINE_CELLS
     output: list[str] = []
     cells = initial_cells
-    for character in value:
-        if character == " " and cells > 0 and cells % (width - 1) == 0:
+    for index, character in enumerate(value):
+        if (
+            character == " "
+            and cells > 0
+            and cells % (width - 1) == 0
+            and not (preserve_boundary_runs and index + 1 < len(value) and value[index + 1] == " ")
+        ):
             continue
         output.append(character)
         # ADV98 advances one text cell per displayed character, including
@@ -58,24 +83,38 @@ def encode_record_translation(
     speaker_repairs: bool = True,
     initial_cells: int = 0,
     one_byte_codes: dict[str, int] | None = None,
+    preserve_boundary_runs: bool = False,
 ) -> bytes:
     """Preserve DOB2 inline ASCII controls and encode only their display text."""
+    quoted_control = leading_quoted_control(raw)
+    if quoted_control:
+        return quoted_control + encode_translation(
+            trim_wrap_boundary_spaces(
+                translation, width, initial_cells=initial_cells,
+                preserve_boundary_runs=preserve_boundary_runs,
+            ),
+            codes,
+            one_byte_codes=one_byte_codes,
+        )
     for prefix in PRESERVED_ASCII_PREFIXES:
         if original.startswith(prefix) and translation.startswith(prefix):
             display_text = trim_wrap_boundary_spaces(
-                translation[len(prefix) :], width, initial_cells=initial_cells
+                translation[len(prefix) :], width, initial_cells=initial_cells,
+                preserve_boundary_runs=preserve_boundary_runs,
             )
             return prefix.encode("ascii") + encode_translation(display_text, codes, one_byte_codes=one_byte_codes)
     if not speaker_repairs:
         return encode_translation(
-            trim_wrap_boundary_spaces(translation, width, initial_cells=initial_cells),
+            trim_wrap_boundary_spaces(translation, width, initial_cells=initial_cells,
+                                      preserve_boundary_runs=preserve_boundary_runs),
             codes, one_byte_codes=one_byte_codes,
         )
     if raw is not None and len(raw) >= 3 and raw[1:3] == bytes.fromhex("81 6D"):
         # CONTROL_08's one-byte speaker ID precedes the source opening bracket.
         display_text = normalize_control08_speaker_translation(translation)
         return raw[:1] + encode_translation(
-            trim_wrap_boundary_spaces(display_text, width, initial_cells=initial_cells),
+            trim_wrap_boundary_spaces(display_text, width, initial_cells=initial_cells,
+                                      preserve_boundary_runs=preserve_boundary_runs),
             codes, one_byte_codes=one_byte_codes,
         )
     # After CONTROL_08, the one-byte compressed glyph before ``［`` is the
@@ -87,9 +126,22 @@ def encode_record_translation(
         and speaker_parameter[0] == 0x82
         and 0x2D <= speaker_parameter[1] - 0x72 <= 0x7F
     )
+    # Some non-dialogue records begin with a small kana that is actually the
+    # one-byte ADV98 parameter emitted before the visible text.  The decoder
+    # exposes that parameter as a leading character (for example ``ょこの``),
+    # but the engine still consumes the byte at runtime.  Preserve the
+    # parameter while replacing the visible text, otherwise the first
+    # translated glyph is consumed and disappears on screen.
+    if compressed_parameter and original[0] in "ぁぃぅぇぉっゃゅょゎ":
+        return encode_adv98_text(original[0]) + encode_translation(
+            trim_wrap_boundary_spaces(translation, width, initial_cells=initial_cells,
+                                      preserve_boundary_runs=preserve_boundary_runs),
+            codes, one_byte_codes=one_byte_codes,
+        )
     if len(original) >= 2 and original[1] == "［" and compressed_parameter:
         return encode_adv98_text(original[0]) + encode_translation(
-            trim_wrap_boundary_spaces(translation, width, initial_cells=initial_cells),
+            trim_wrap_boundary_spaces(translation, width, initial_cells=initial_cells,
+                                      preserve_boundary_runs=preserve_boundary_runs),
             codes, one_byte_codes=one_byte_codes,
         )
     # In the complementary form, CONTROL_08 has already consumed the lead
@@ -104,7 +156,8 @@ def encode_record_translation(
                 close_index = translation.index(closing, 1)
                 display_text = translation[1:close_index] + "]" + translation[close_index + 1 :]
         return encode_adv98_text(original[0]) + encode_translation(
-            trim_wrap_boundary_spaces(display_text, width, initial_cells=initial_cells),
+            trim_wrap_boundary_spaces(display_text, width, initial_cells=initial_cells,
+                                      preserve_boundary_runs=preserve_boundary_runs),
             codes, one_byte_codes=one_byte_codes,
         )
     bracket_positions = [original.find(mark) for mark in ("［", "］", "[", "]")]
@@ -117,11 +170,13 @@ def encode_record_translation(
             # omit it from the encoded dialogue as well as visible text.
             display_text = translation[len(prefix) :] if translation.startswith(prefix) else translation
             return encode_translation(
-                trim_wrap_boundary_spaces(display_text, width, initial_cells=initial_cells),
+                trim_wrap_boundary_spaces(display_text, width, initial_cells=initial_cells,
+                                          preserve_boundary_runs=preserve_boundary_runs),
                 codes, one_byte_codes=one_byte_codes,
             )
     return encode_translation(
-        trim_wrap_boundary_spaces(translation, width, initial_cells=initial_cells),
+        trim_wrap_boundary_spaces(translation, width, initial_cells=initial_cells,
+                                  preserve_boundary_runs=preserve_boundary_runs),
         codes, one_byte_codes=one_byte_codes,
     )
 
@@ -129,7 +184,8 @@ def encode_record_translation(
 def main(*, width: int = DISPLAY_LINE_CELLS, speaker_repairs: bool = True,
          preprocess_lang=None, postprocess_lang=None,
          postprocess_output=None,
-         default_marine_remap=None) -> int:
+         default_marine_remap=None,
+         preserve_boundary_runs: bool = False) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--patch-manifest", type=Path, help="record exact allowed byte replacements for validation")
     parser.add_argument("source_mes", type=Path)
@@ -191,7 +247,7 @@ def main(*, width: int = DISPLAY_LINE_CELLS, speaker_repairs: bool = True,
         if codes is None:
             codes = load_font_codes(args.font_table)
             if args.marine_remap is not None:
-                from gspecific.adv_common.text import load_marine_remap
+                from mes.adv_common.text import load_marine_remap
                 one_byte_codes = load_marine_remap(args.marine_remap)
         try:
             # Normalize only the encoded MES value.  Keep the editable JSON
@@ -211,7 +267,8 @@ def main(*, width: int = DISPLAY_LINE_CELLS, speaker_repairs: bool = True,
                 translation = normalize_control08_speaker_translation(translation)
                 translation = translation.translate(str.maketrans({"[": "〔", "]": "〕"}))
                 encoded = encode_translation(
-                    trim_wrap_boundary_spaces(translation, width),
+                    trim_wrap_boundary_spaces(translation, width,
+                                              preserve_boundary_runs=preserve_boundary_runs),
                     codes,
                     one_byte_codes=one_byte_codes,
                 )
@@ -223,6 +280,7 @@ def main(*, width: int = DISPLAY_LINE_CELLS, speaker_repairs: bool = True,
                     speaker_repairs=speaker_repairs,
                     initial_cells=int(entry.get("_display_prefix_cells", 0)),
                     one_byte_codes=one_byte_codes,
+                    preserve_boundary_runs=preserve_boundary_runs,
                 )
         except ValueError as exc:
             entry["status"] = f"error: {exc}"

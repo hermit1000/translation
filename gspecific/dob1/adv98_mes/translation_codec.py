@@ -13,7 +13,7 @@ if __package__ in (None, ""):
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from gspecific.adv_common.text import (
+from mes.adv_common.text import (
     FORBIDDEN_CONTROL_PAIRS, encode_adv98_text, encode_translation,
     load_font_codes, parse_offset,
 )

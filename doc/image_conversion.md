@@ -283,6 +283,32 @@ cmp.kor.bin
 | Mac1 `.IMG` | XOR delta + RLE | plane-major-row | 4bpp, 16 index | `gspecific/mac1/` |
 | `.OLH` | 명령 기반 압축 | plane-major-column | 4bpp, 16색 | `module/pc98_image/formats/olh.py` |
 | `.OZM` | OZM RLE | plane-major-column | 4bpp, 16색 | `module/pc98_image/formats/ozm.py` |
+| ADV98 `.GPC` | nested zero-mask + stride/row XOR | row-major-plane-interlaced | 4bpp, 16색 | `module/pc98_image/formats/adv98_gpc.py` |
+
+### ADV98 GPC
+
+DOB1, DOB2, Marine Philt, Dracula, Necronomicon은 공용
+`module.pc98_image.formats.adv98_gpc`의 `decode_gpc`와 `encode_gpc`를 사용한다.
+게임별 스크립트는 파일 목록, MES 출력 모드, 헤더 변형, 팔레트 표현 및
+저장 경로를 선택한다. 순수 코덱에는 workspace 또는 게임 모듈 의존성이 없다.
+
+디코딩은 zero-mask 해제 → stride XOR → 행 XOR → interlace 배치 →
+픽셀 인덱스 변환으로 진행한다. stride 체인 사이에 AL 누적값을 유지하는
+실제 게임 루틴을 사용하며, 화면 자르기나 색상 마스킹으로 복원하지 않는다.
+
+인코딩은 원본 GPC와 편집한 인덱스를 받아 같은 과정의 역변환을 수행하고
+원본 헤더·팔레트·stride·interlace를 보존한다. `variant="necronomicon"`은
+zero declared size와 descriptor-inclusive compressed size를 지원한다.
+모드 및 `cumulative_xor` 설정은 다시 디코딩할 때도 같게 지정한다.
+
+정확한 PNG 팔레트 매핑과 생성물 저장은
+`module.pc98_image.adv98_artifacts`의 `normalize_indexed`, `write_artifacts`를
+사용한다. 기존 게임별 저장 위치는 유지하며, Dracula PNG는
+`image-pc98/png`, Necronomicon PNG는 `image-pc98/PNG`에 저장한다.
+
+공용 API는 [이미지 모듈 README](../module/pc98_image/README.md), 실제 코드
+검증은 [GPC_RUNTIME_ANALYSIS.md](../gspecific/dob1/GPC_RUNTIME_ANALYSIS.md)를
+참조한다. `gspecific.dob1.gpc`의 이전 import 경로는 호환용으로 유지한다.
 
 ### Taikou 1 RLE/LZ
 

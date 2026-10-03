@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 
 from .decode_mes import decode_mes, make_records
-from gspecific.adv_common.tokens import verify_tokens
+from mes.adv_common.tokens import verify_tokens
 
 
 def analyze(data: bytes) -> dict:

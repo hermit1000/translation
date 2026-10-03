@@ -1,1 +1,1 @@
-"""Shared, byte-preserving ADV script utilities."""
+"""Compatibility package for the former gspecific.adv_common location."""

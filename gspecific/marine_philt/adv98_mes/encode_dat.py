@@ -3,8 +3,8 @@
 from __future__ import annotations
 import argparse, hashlib, json, shutil
 from pathlib import Path
-from gspecific.adv_common.text import load_font_codes, encode_translation
-from gspecific.adv_common.patches import apply_replacements
+from mes.adv_common.text import load_font_codes, encode_translation
+from mes.adv_common.patches import apply_replacements
 
 def wrap_paragraph(text: str, records: list[dict]) -> list[str]:
     """Wrap one paragraph into the original line count and available widths."""

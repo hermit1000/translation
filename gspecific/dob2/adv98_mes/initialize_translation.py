@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 
 from .decode_mes import decode_document
-from gspecific.adv_common.migrate_ascii import prepare_migration
+from mes.tools.migrate_ascii import prepare_migration
 
 
 SPEAKER_RE = re.compile(r"^［([^］]+)］")
@@ -81,7 +81,7 @@ def main() -> int:
                 raise ValueError(f"source info reference mismatch: {source.name}")
             document, lang, report = prepare_migration(source.read_bytes(), previous_info, previous, document)
             if not report["safe_to_write"]:
-                raise ValueError(f"{source.name}: changed translation ranges require review; use gspecific.adv_common.migrate_ascii")
+                raise ValueError(f"{source.name}: changed translation ranges require review; use mes.tools.migrate_ascii")
         planned.append((info_path, lang_path, document, lang))
     # Validate every existing pair before overwriting any file in this batch.
     output_dir.mkdir(parents=True, exist_ok=True)

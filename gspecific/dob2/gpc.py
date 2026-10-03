@@ -7,7 +7,7 @@ import shutil
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from gspecific.dob1.gpc import write_artifacts
+from module.pc98_image.adv98_artifacts import write_artifacts
 from gspecific.dob2.adv98_mes.decode_mes import decode_mes
 
 

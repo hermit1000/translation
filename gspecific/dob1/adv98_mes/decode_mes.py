@@ -40,7 +40,7 @@ if __package__ in (None, ""):
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from gspecific.adv_common.tokens import (
+from mes.adv_common.tokens import (
     is_sjis_lead, is_sjis_trail, decode_pair, make_token, verify_tokens,
 )
 

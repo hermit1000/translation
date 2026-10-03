@@ -1,0 +1,19 @@
+{
+  "format": "necronomicon-system-mec-texts-v1",
+  "padding_mode": "compact-space",
+  "entries": [
+    {"offset":"00252","end":"0025F","original":"広場へ移動します。","raw_hex":"8D4C8FEA6488DA93AE436A458142"},
+    {"offset":"00283","end":"00292","original":"魚鱗亭へ移動します。","raw_hex":"8B9B97D892E06488DA93AE436A458142"},
+    {"offset":"002B6","end":"002C5","original":"雑貨店へ移動します。","raw_hex":"8E4789DD93586488DA93AE436A458142"},
+    {"offset":"002E9","end":"002F6","original":"遺跡へ移動します。","raw_hex":"88E290D56488DA93AE436A458142"},
+    {"offset":"0031A","end":"00325","original":"港へ移動します。","raw_hex":"8D606488DA93AE436A458142"},
+    {"offset":"00349","end":"00360","original":"ギルマンハウスへ移動します。","raw_hex":"834D838B837D8393836E834583586488DA93AE436A458142"},
+    {"offset":"00384","end":"00398","original":"ダゴンの教会へ移動します。","raw_hex":"835F835383935A8BB389EF6488DA93AE436A458142"},
+    {"offset":"003BC","end":"003CB","original":"資料館へ移動します。","raw_hex":"8E9197BF8AD96488DA93AE436A458142"},
+    {"offset":"003EF","end":"00400","original":"修道院跡へ移動します。","raw_hex":"8F4393B9894090D56488DA93AE436A458142"},
+    {"offset":"00424","end":"00431","original":"墓地へ移動します。","raw_hex":"95E6926E6488DA93AE436A458142"},
+    {"offset":"00455","end":"00468","original":"ダニッジ邸へ移動します。","raw_hex":"835F836A8362835793406488DA93AE436A458142"},
+    {"offset":"0048C","end":"0049B","original":"精錬所へ移動します。","raw_hex":"90B898428F8A6488DA93AE436A458142"},
+    {"offset":"004BF","end":"004CC","original":"娼館へ移動します。","raw_hex":"8FA98AD96488DA93AE436A458142"}
+  ]
+}

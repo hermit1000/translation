@@ -41,6 +41,11 @@ kor-pc98-dosbox-x/
 
 이미지 디코딩·인코딩 자료의 대표 폴더는 `image-<platform>/`으로 한다.
 
+ADV98 GPC의 이미지 인코딩·디코딩은
+`module.pc98_image.formats.adv98_gpc`를 사용하고, 파일 저장과 PNG 팔레트
+매핑은 `module.pc98_image.adv98_artifacts`를 사용한다. `gspecific`에는
+게임별 파일 목록, 헤더·팔레트 설정 및 기존 저장 경로 선택을 둔다.
+
 ```text
 PC-98: image-pc98/
 DOS:   image-dos/

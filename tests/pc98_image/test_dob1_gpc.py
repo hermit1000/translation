@@ -1,6 +1,6 @@
 import struct
 
-from gspecific.dob1.gpc import (
+from module.pc98_image.formats.adv98_gpc import (
     apply_output_mode,
     decode_packed_palette,
     pack_zero_masks,
@@ -25,8 +25,14 @@ def test_pack_zero_masks_roundtrip():
     assert consumed == len(packed)
 
 
-def test_undo_xor_delta_uses_row_stride():
-    assert undo_xor_delta(bytes((2, 1, 2, 2, 6, 7, 14))) == bytes((1, 2, 3, 4, 4, 10))
+def test_undo_xor_delta_matches_runtime_accumulator_carry():
+    assert undo_xor_delta(bytes((2, 1, 2, 2, 6, 7, 14))) == bytes((1, 6, 3, 0, 4, 14))
+
+
+def test_inverse_horizontal_xor_matches_runtime_encoded_bytes():
+    from module.pc98_image.formats.adv98_gpc import inverse_horizontal_xor
+
+    assert inverse_horizontal_xor(bytes((1, 6, 3, 0, 4, 14)), 2) == bytes((1, 2, 2, 6, 7, 14))
 
 
 def test_decode_packed_palette_uses_0grb_words():

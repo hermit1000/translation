@@ -16,7 +16,7 @@ except ImportError:
     from decode_mes import decode_mes
 
 
-from gspecific.adv_common.patches import apply_replacements, write_patch_manifest
+from mes.adv_common.patches import apply_replacements, write_patch_manifest
 
 
 def main() -> int:

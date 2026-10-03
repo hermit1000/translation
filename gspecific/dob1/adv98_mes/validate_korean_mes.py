@@ -17,7 +17,7 @@ try:
 except ImportError:  # direct script execution from workspace root
     from decode_mes import decode_mes
 
-from gspecific.adv_common.patches import verify_patch_manifest
+from mes.adv_common.patches import verify_patch_manifest
 
 
 PUNCT_SLOTS = {0x0D, 0x0E, 0x0F, 0x11, 0x12}

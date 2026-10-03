@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from gspecific.dob1.adv98_mes import decode_mes as dob1
-from gspecific.adv_common.ascii import find_ascii_spans as _ascii_spans, resolve_ascii_and_gaiji
+from mes.adv_common.ascii import find_ascii_spans as _ascii_spans, resolve_ascii_and_gaiji
 
 
 def decode_mes(data: bytes, *, structured_ascii: bool = False) -> list[dict[str, Any]]:
