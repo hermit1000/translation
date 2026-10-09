@@ -10,16 +10,41 @@ from pathlib import Path
 from PIL import Image
 
 from gspecific.nobu5.decode_graphics import (
+    GRAPH_KEYPAD_HEIGHT,
+    GRAPH_KEYPAD_OFFSET,
+    GRAPH_KEYPAD_PALETTE_8,
+    GRAPH_KEYPAD_SIZE,
+    GRAPH_KEYPAD_WIDTH,
     MAIN_PALETTE_00_8,
     PACK_SECTORS,
     SLOGO_OFFSETS,
     SOPEN_IMAGE_COUNT,
     SOPEN_PALETTE_8,
+    SOPEN_PALETTE_16,
+    decode_interleaved_planar,
     decode_slogo_image,
     decode_sopen_image,
     encode_interleaved_planar,
     rotate_left,
 )
+
+
+MAIN_DATE_OFFSET = 0x4F950
+MAIN_DATE_SIZE = 0x360
+MAIN_DATE_WIDTH = 144
+MAIN_DATE_HEIGHT = 16
+# Matched against workspace5 capture/main_007.raw1.png. Indices 1 and 5
+# are unused in the original date image and have black placeholders.
+MAIN_DATE_PALETTE_8 = [
+    (0x00, 0x00, 0x00),
+    (0x00, 0x00, 0x00),
+    (0xFF, 0x45, 0x20),
+    (0xFF, 0xAA, 0xCF),
+    (0x65, 0xAA, 0x45),
+    (0x00, 0x00, 0x00),
+    (0xFF, 0xCF, 0x65),
+    (0xFF, 0xFF, 0xFF),
+]
 
 
 class EncodeError(ValueError):
@@ -86,7 +111,10 @@ def image_to_indices(
             f"expected {width}x{height}"
         )
 
-    color_to_index = {color: index for index, color in enumerate(palette)}
+    # Prefer the first index when an unused palette entry duplicates a color.
+    color_to_index = {}
+    for index, color in enumerate(palette):
+        color_to_index.setdefault(color, index)
     indices = bytearray()
     for position, color in enumerate(image.getdata()):
         try:
@@ -100,6 +128,7 @@ def image_to_indices(
 
 def image_to_sopen_groups(png_path: Path, width: int, height: int) -> tuple[list[int], bytes, bytes]:
     with Image.open(png_path) as source:
+        source_indices = list(source.getdata()) if source.mode == "P" else None
         image = source.convert("RGBA")
 
     if image.size != (width, height):
@@ -108,7 +137,9 @@ def image_to_sopen_groups(png_path: Path, width: int, height: int) -> tuple[list
             f"expected {width}x{height}"
         )
 
-    color_to_index = {color: index for index, color in enumerate(SOPEN_PALETTE_8)}
+    color_to_index = {}
+    for index, color in enumerate(SOPEN_PALETTE_16):
+        color_to_index.setdefault(color, index)
     groups_per_row = (width + 3) // 4
     groups: list[int] = []
     indices = bytearray(width * height)
@@ -120,24 +151,23 @@ def image_to_sopen_groups(png_path: Path, width: int, height: int) -> tuple[list
             for bit in range(4):
                 x = group_x * 4 + bit
                 if x >= width:
-                    pattern |= (8 >> bit) << 12
                     continue
                 position = y * width + x
                 red, green, blue, opacity = pixels[position]
+                if opacity != 255:
+                    raise EncodeError(f"{png_path}: SOPEN has four color planes, not an alpha mask; pixel ({x}, {y}) is transparent")
                 try:
-                    index = color_to_index[(red, green, blue)]
-                except KeyError as error:
-                    if opacity < 128:
-                        index = 0
+                    native_index = source_indices[position] if source_indices is not None else None
+                    if native_index is not None and native_index < 16 and SOPEN_PALETTE_16[native_index] == (red, green, blue):
+                        index = native_index
                     else:
-                        raise EncodeError(
-                            f"{png_path}: unsupported RGB color {(red, green, blue)} at ({x}, {y})"
-                        ) from error
+                        index = color_to_index[(red, green, blue)]
+                except KeyError as error:
+                    raise EncodeError(
+                        f"{png_path}: unsupported RGB color {(red, green, blue)} at ({x}, {y})"
+                    ) from error
                 indices[position] = index
-                if opacity < 128:
-                    pattern |= (8 >> bit) << 12
-                    alpha[position] = 0
-                for plane in range(3):
+                for plane in range(4):
                     if index & (1 << plane):
                         pattern |= (8 >> bit) << (plane * 4)
             groups.append(pattern)
@@ -160,15 +190,17 @@ def sopen_literal_bytes(pattern: int, repeat: int, patterns: tuple[int, ...]) ->
     high = pattern >> 8
     if high == 0:
         return bytes((0x08 | count_bits, low))
-    if pattern == ((low & 0x0F) | ((low & 0xF0) << 8)):
-        return bytes((0x10 | count_bits, low))
-    if pattern == low << 4:
-        return bytes((0x20 | count_bits, low))
-    if pattern == ((low & 0x0F) << 4 | ((low & 0xF0) << 8)):
-        return bytes((0x28 | count_bits, low))
+    if pattern & ~0x0F0F == 0:
+        return bytes((0x10 | count_bits, (pattern & 0x0F) | (pattern >> 4 & 0xF0)))
+    if pattern & ~0xF00F == 0:
+        return bytes((0x18 | count_bits, (pattern & 0x0F) | (pattern >> 8 & 0xF0)))
+    if pattern & ~0x0FF0 == 0:
+        return bytes((0x20 | count_bits, pattern >> 4))
+    if pattern & ~0xF0F0 == 0:
+        return bytes((0x28 | count_bits, (pattern >> 4 & 0x0F) | (pattern >> 8 & 0xF0)))
     if low == 0:
         return bytes((0x30 | count_bits, high))
-    return bytes((0x38 | count_bits, low, high))
+    return bytes((0x38 | count_bits, high, low))
 
 
 def choose_sopen_patterns(groups: list[int]) -> tuple[int, ...]:
@@ -210,10 +242,10 @@ def encode_sopen_stream(groups: list[int], width: int, height: int, patterns: tu
                     dp[target] = (candidate_cost, candidate)
 
             for selector in range(1, 5):
-                if position >= selector:
+                if row_index * groups_per_row + position >= selector:
                     repeat = 0
                     limit = min(16, groups_per_row - position)
-                    while repeat < limit and row[position + repeat] == row[position + repeat - selector]:
+                    while repeat < limit and row[position + repeat] == groups[row_index * groups_per_row + position + repeat - selector]:
                         repeat += 1
                     for copy_count in range(1, repeat + 1):
                         command = bytes((0x80 | ((selector - 1) << 4) | (copy_count - 1),))
@@ -626,6 +658,130 @@ def encode_pack_archive(workspace: Path, *, all_artifacts: bool = False) -> int:
     return encoded_count
 
 
+def encode_graph_keypad(workspace: Path, *, all_artifacts: bool = False) -> int:
+    input_dir = workspace / "binary_inputs-pc98" / "GRAPH.NB5"
+    stem = f"{GRAPH_KEYPAD_OFFSET:06x}"
+    png_path = input_dir / f"{stem}.kor.png"
+    if not png_path.is_file():
+        return 0
+
+    source_path = workspace / "jpn-pc98" / "GRAPH.NB5"
+    source = bytearray(source_path.read_bytes())
+    start = GRAPH_KEYPAD_OFFSET
+    end = start + GRAPH_KEYPAD_SIZE
+    if end > len(source):
+        raise EncodeError("GRAPH.NB5 keypad block at 0x00585E is outside the file")
+    indices = image_to_indices(png_path, GRAPH_KEYPAD_WIDTH, GRAPH_KEYPAD_HEIGHT, GRAPH_KEYPAD_PALETTE_8)
+    planar = encode_interleaved_planar(indices, GRAPH_KEYPAD_WIDTH, GRAPH_KEYPAD_HEIGHT, 3)
+    if len(planar) != GRAPH_KEYPAD_SIZE:
+        raise EncodeError(f"{png_path}: encoded size {len(planar)} does not match {GRAPH_KEYPAD_SIZE}")
+    if decode_interleaved_planar(planar, GRAPH_KEYPAD_WIDTH, GRAPH_KEYPAD_HEIGHT, 3) != indices:
+        raise EncodeError(f"{png_path}: encoded GRAPH pixels do not round-trip")
+
+    replacement_path = input_dir / f"{stem}.kor.bin"
+    replacement_path.write_bytes(planar)
+    source[start:end] = planar
+    output_path = input_dir / "GRAPH.NB5"
+    output_path.write_bytes(source)
+    files = {"png": png_path.name, "replacement": replacement_path.name}
+    planar_path = input_dir / f"{stem}.pln.kor.bin"
+    indices_path = input_dir / f"{stem}.idx.kor.bin"
+    if all_artifacts:
+        planar_path.write_bytes(planar)
+        indices_path.write_bytes(indices)
+        files.update({"planar": planar_path.name, "pixels": indices_path.name})
+    else:
+        planar_path.unlink(missing_ok=True)
+        indices_path.unlink(missing_ok=True)
+
+    write_binary_input_json(workspace, "GRAPH.NB5", [{"start": start, "end": end, "replacement": replacement_path.name}])
+    report = {
+        "source": source_path.name,
+        "format": "Nobu5 GRAPH uncompressed 3bpp keypad replacement",
+        "output": output_path.name,
+        "output_mode": "fixed-record",
+        "entries": [{
+            "offset": f"0x{start:06X}",
+            "width": GRAPH_KEYPAD_WIDTH,
+            "height": GRAPH_KEYPAD_HEIGHT,
+            "original_size": GRAPH_KEYPAD_SIZE,
+            "output_size": len(planar),
+            "files": files,
+        }],
+    }
+    (input_dir / "encode_log.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\r\n",
+    )
+    print(f"{png_path}: uncompressed={len(planar)} record={GRAPH_KEYPAD_SIZE}")
+    return 1
+
+
+def encode_main_date(workspace: Path, *, all_artifacts: bool = False) -> int:
+    input_dir = workspace / "binary_inputs-pc98" / "MAIN.EXE"
+    stem = f"{MAIN_DATE_OFFSET:06x}"
+    png_path = input_dir / f"{stem}.kor.png"
+    if not png_path.is_file():
+        return 0
+
+    source_path = workspace / "jpn-pc98" / "MAIN.EXE"
+    start = MAIN_DATE_OFFSET
+    end = start + MAIN_DATE_SIZE
+    if end > len(source_path.read_bytes()):
+        raise EncodeError("MAIN.EXE date block at 0x04F950 is outside the file")
+    indices = image_to_indices(png_path, MAIN_DATE_WIDTH, MAIN_DATE_HEIGHT, MAIN_DATE_PALETTE_8)
+    planar = encode_interleaved_planar(indices, MAIN_DATE_WIDTH, MAIN_DATE_HEIGHT, 3)
+    if len(planar) != MAIN_DATE_SIZE:
+        raise EncodeError(f"{png_path}: encoded size {len(planar)} does not match {MAIN_DATE_SIZE}")
+    if decode_interleaved_planar(planar, MAIN_DATE_WIDTH, MAIN_DATE_HEIGHT, 3) != indices:
+        raise EncodeError(f"{png_path}: encoded MAIN date pixels do not round-trip")
+
+    # MAIN.EXE already has dialogue translations; update only its binary inputs.
+    json_path = workspace / "script-pc98" / "MAIN.EXE_kor.json"
+    script = json.loads(json_path.read_text(encoding="utf-8"))
+    replacement_path = input_dir / f"{stem}.kor.bin"
+    address = f"{start:05X}={end - 1:05X}"
+    script.setdefault("binary_input", {})[address] = f"MAIN.EXE/{replacement_path.name}"
+
+    replacement_path.write_bytes(planar)
+    json_path.write_text(
+        json.dumps(script, ensure_ascii=False, indent=4) + "\n",
+        encoding="utf-8",
+        newline="\r\n",
+    )
+    files = {"png": png_path.name, "replacement": replacement_path.name}
+    planar_path = input_dir / f"{stem}.pln.kor.bin"
+    indices_path = input_dir / f"{stem}.idx.kor.bin"
+    if all_artifacts:
+        planar_path.write_bytes(planar)
+        indices_path.write_bytes(indices)
+        files.update({"planar": planar_path.name, "pixels": indices_path.name})
+    else:
+        planar_path.unlink(missing_ok=True)
+        indices_path.unlink(missing_ok=True)
+    report = {
+        "source": source_path.name,
+        "format": "Nobu5 MAIN uncompressed 3bpp battle date replacement",
+        "output_mode": "binary-input-only",
+        "entries": [{
+            "offset": f"0x{start:06X}",
+            "width": MAIN_DATE_WIDTH,
+            "height": MAIN_DATE_HEIGHT,
+            "original_size": MAIN_DATE_SIZE,
+            "output_size": len(planar),
+            "files": files,
+        }],
+    }
+    (input_dir / "encode_log.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\r\n",
+    )
+    print(f"{png_path}: uncompressed={len(planar)} record={MAIN_DATE_SIZE}")
+    return 1
+
+
 def write_binary_input_json(
     workspace: Path,
     target_name: str,
@@ -769,7 +925,7 @@ def encode_sopen_archive(workspace: Path, *, all_artifacts: bool = False) -> int
         write_binary_input_json(workspace, "SOPEN.NB5", json_entries)
         report = {
             "source": source_path.name,
-            "format": "Nobu5 SOPEN mask-overlay replacement records",
+            "format": "Nobu5 SOPEN 4bpp replacement records",
             "output": output_path.name,
             "output_mode": "fixed-record",
             "entries": entries,
@@ -802,9 +958,13 @@ def main() -> int:
     slogo_count = encode_slogo_archive(workspace, all_artifacts=args.all_artifacts)
     sopen_count = encode_sopen_archive(workspace, all_artifacts=args.all_artifacts)
     pack_count = encode_pack_archive(workspace, all_artifacts=args.all_artifacts)
+    graph_count = encode_graph_keypad(workspace, all_artifacts=args.all_artifacts)
+    main_date_count = encode_main_date(workspace, all_artifacts=args.all_artifacts)
     print(f"encoded {slogo_count} SLOGO image(s)")
     print(f"encoded {sopen_count} SOPEN image(s)")
     print(f"encoded {pack_count} PACK image(s)")
+    print(f"encoded {graph_count} GRAPH image(s)")
+    print(f"encoded {main_date_count} MAIN date image(s)")
     return 0
 
 

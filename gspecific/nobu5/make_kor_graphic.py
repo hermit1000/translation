@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from gspecific.nobu5.decode_graphics import GRAPH_KEYPAD_HEIGHT, GRAPH_KEYPAD_PALETTE_8, GRAPH_KEYPAD_WIDTH
 from module.font_image import return_img_roi
 from module.font_table import FontTable
 
@@ -13,6 +15,7 @@ FONT_TABLE_PATH = Path("font_table/font_table-kor-jin.json")
 BISCO_PATH = Path("c:/work_han/BISCO.bmp")
 TITLE_FONT_PATH = Path("c:/work_han/font_ext/ext/ON 정속언해R.ttf")
 PACK_DIR = Path("c:/work_han/workspace5/binary_inputs-pc98/PACK.NB5")
+GRAPH_DIR = Path("c:/work_han/workspace5/binary_inputs-pc98/GRAPH.NB5")
 
 FOREGROUND = (0, 0, 0)
 SHADOW = (32, 69, 117)
@@ -95,6 +98,20 @@ PLACEMENTS = {
 TEXT_OVERRIDES = {
     "01ec00": ["내정", "군사", "외교", "조략", "인사", "거래", "자국", "기능", "관망"],
 }
+
+GRAPH_KEYPAD_PLACEMENTS = [
+    TextPlacement(
+        text,
+        64,
+        y,
+        shadow=False,
+        underlay=True,
+        underlay_color=GRAPH_KEYPAD_PALETTE_8[6],
+        underlay_offset=(1, 1),
+        char_advance=20,
+    )
+    for text, y in (("중단", 22), ("취소", 42), ("최대", 62), ("결정", 82))
+]
 
 
 def resolve_windows_path(path: Path) -> Path:
@@ -252,13 +269,35 @@ def placements_from_text_file(pack_dir: Path) -> dict[str, list[TextPlacement]]:
     return placements
 
 
+def make_graph_keypad(graph_dir: Path, font_img: Image.Image, font_table: FontTable) -> Path:
+    """Draw the four Korean keypad labels on the user-prepared background."""
+    bg_path = graph_dir / "00585e.bg.png"
+    canvas = Image.open(bg_path).convert("RGB")
+    if canvas.size != (GRAPH_KEYPAD_WIDTH, GRAPH_KEYPAD_HEIGHT):
+        raise ValueError(f"{bg_path}: expected {GRAPH_KEYPAD_WIDTH}x{GRAPH_KEYPAD_HEIGHT}, got {canvas.size}")
+    for placement in GRAPH_KEYPAD_PLACEMENTS:
+        draw_text(canvas, font_img, font_table, placement)
+    out_path = graph_dir / "00585e.kor.png"
+    canvas.save(out_path)
+    print(f"Saved {out_path}")
+    return out_path
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Draw Korean labels for Nobu5 PC-98 graphics.")
+    parser.add_argument("--graph-only", action="store_true", help="only generate the GRAPH.NB5 keypad")
+    args = parser.parse_args()
     pack_dir = resolve_windows_path(PACK_DIR)
+    graph_dir = resolve_windows_path(GRAPH_DIR)
     font_path = resolve_windows_path(BISCO_PATH)
     title_font_path = resolve_windows_path(TITLE_FONT_PATH)
 
     font_table = FontTable(FONT_TABLE_PATH)
     font_img = Image.open(font_path).convert("1")
+
+    make_graph_keypad(graph_dir, font_img, font_table)
+    if args.graph_only:
+        return
 
     title_canvas = Image.open(pack_dir / "016200.bg.png").convert("RGB")
     for text, box, font_size in TITLE_PLACEMENTS:

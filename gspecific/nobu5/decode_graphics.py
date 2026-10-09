@@ -19,6 +19,10 @@ ITEM_RECORD_SIZE = 0x438
 ITEM_IMAGE_COUNT = 26
 ITEM_WIDTH = 64
 ITEM_HEIGHT = 45
+GRAPH_KEYPAD_OFFSET = 0x585E
+GRAPH_KEYPAD_SIZE = 0x0F3C
+GRAPH_KEYPAD_WIDTH = 104
+GRAPH_KEYPAD_HEIGHT = 100
 SOPEN_IMAGE_COUNT = 55
 NKAO_IMAGE_COUNT = 3
 SLOGO_OFFSETS = (0x0000, 0x04E5, 0x07D6, 0x0C6D, 0x1232)
@@ -103,6 +107,19 @@ SOPEN_PALETTE_16 = [
 SOPEN_PALETTE_8 = SOPEN_PALETTE_16[:8]
 MAIN_PALETTE_00_8 = [
     tuple(expand_pc98_component(value) for value in (red, green, blue)) for blue, red, green in MAIN_PALETTE_00_BGR
+]
+
+# Matched against workspace5 capture/main_002.raw1.png. Index 4 is unused
+# in the verified keypad image; its actual color is unknown.
+GRAPH_KEYPAD_PALETTE_8 = [
+    (0x00, 0x00, 0x00),
+    (0x30, 0x65, 0xAA),
+    (0xCF, 0x45, 0x00),
+    (0xEF, 0xCF, 0x9A),
+    (0x00, 0x00, 0x00),
+    (0xBA, 0xDF, 0xEF),
+    (0xCF, 0xAA, 0x55),
+    (0xEF, 0xEF, 0xFF),
 ]
 
 
@@ -239,7 +256,7 @@ def save_png(
 
 
 def decode_sopen_image(data: bytes, start: int) -> tuple[int, int, bytes, bytes, bytes, int]:
-    """Decode SOPEN.EXE sub_10CEF to 3bpp indices and a transparency mask."""
+    """Decode SOPEN.EXE sub_10CEF to four color planes and opaque pixels."""
     if start + 20 > len(data):
         raise DecodeError("truncated SOPEN image header")
     width = int.from_bytes(data[start : start + 2], "little") & 0x7FFF
@@ -284,14 +301,16 @@ def decode_sopen_image(data: bytes, start: int) -> tuple[int, int, bytes, bytes,
             elif control & 0x40:
                 pattern = patterns[(control >> 3) & 7]
             elif selector == 0x38:
-                low = read_byte()
-                pattern = low | read_byte() << 8
+                high = read_byte()
+                pattern = high << 8 | read_byte()
             else:
                 value = read_byte()
                 shorthand = selector >> 3
                 if shorthand == 1:
                     pattern = value
-                elif shorthand in (2, 3):
+                elif shorthand == 2:
+                    pattern = (value & 0x0F) | (value & 0xF0) << 4
+                elif shorthand == 3:
                     pattern = (value & 0x0F) | (value & 0xF0) << 8
                 elif shorthand == 4:
                     pattern = value << 4
@@ -317,17 +336,13 @@ def decode_sopen_image(data: bytes, start: int) -> tuple[int, int, bytes, bytes,
                 for bit in range(4):
                     x = group_x * 4 + bit
                     if x < width and mask & (8 >> bit):
-                        if plane == 3:
-                            alpha[y * width + x] = 0
-                        else:
-                            indices[y * width + x] |= 1 << plane
+                        indices[y * width + x] |= 1 << plane
     return width, height, bytes(planar), bytes(indices), bytes(alpha), position
 
 
 def decode_nkao_image(data: bytes, start: int) -> tuple[int, int, bytes, bytes, int]:
     """Decode NKAO.NB5 as 4bpp SOPEN-style image data."""
-    width, height, planar, _, _, position = decode_sopen_image(data, start)
-    indices = decode_interleaved_planar(planar, width, height, 4)
+    width, height, planar, indices, _, position = decode_sopen_image(data, start)
     return width, height, planar, indices, position
 
 
@@ -497,10 +512,10 @@ def extract_sopen_archive(source: Path, input_root: Path, output_root: Path) -> 
         (directory / f"{stem}.cmp.jpn.bin").write_bytes(block)
         (directory / f"{stem}.pln.jpn.bin").write_bytes(planar)
         (directory / f"{stem}.idx.jpn.bin").write_bytes(indices)
-        rgba = bytes(
-            component for index, opacity in zip(indices, alpha) for component in (*SOPEN_PALETTE_8[index], opacity)
-        )
-        Image.frombytes("RGBA", (width, height), rgba).save(directory / f"{stem}.jpn.png")
+        # Keep the native indices, including distinct entries with the same RGB.
+        image = Image.frombytes("P", (width, height), indices)
+        image.putpalette([component for color in SOPEN_PALETTE_16 for component in color])
+        image.save(directory / f"{stem}.jpn.png")
         metadata = {
             "source": relative.as_posix(),
             "offset": f"0x{start:06X}",
@@ -512,15 +527,14 @@ def extract_sopen_archive(source: Path, input_root: Path, output_root: Path) -> 
             "width": width,
             "height": height,
             "planes": 4,
-            "color_planes": 3,
-            "plane_order": "BRG+mask",
+            "color_planes": 4,
+            "plane_order": "BRGI",
             "planar_layout": "interleaved",
             "bit_order": "msb-first",
             "stride": (width + 7) // 8,
-            "mask_plane": 3,
-            "alpha": "mask bit 1 is transparent",
-            "palette": [f"#{red:02X}{green:02X}{blue:02X}" for red, green, blue in SOPEN_PALETTE_8],
-            "palette_source": "SOPEN.EXE file offset 0xBA14, first 8 B/R/G entries",
+            "alpha": "opaque; fourth plane is color bit 3",
+            "palette": [f"#{red:02X}{green:02X}{blue:02X}" for red, green, blue in SOPEN_PALETTE_16],
+            "palette_source": "SOPEN.EXE file offset 0xBA14, first 16 B/R/G entries",
             "record_index": record_index,
             "header_size": 20,
             "compressed_stream_size": stream_end - start,
@@ -574,7 +588,7 @@ def extract_nkao_archive(source: Path, input_root: Path, output_root: Path) -> i
             "height": height,
             "planes": 4,
             "color_planes": 4,
-            "plane_order": "BRGA",
+            "plane_order": "BRGI",
             "planar_layout": "interleaved",
             "bit_order": "msb-first",
             "stride": (width + 7) // 8,
@@ -700,6 +714,56 @@ def extract_pack_archive(source: Path, input_root: Path, output_root: Path) -> i
 
     print(f"{relative}: {len(PACK_SECTORS)} compressed GRPDRV images")
     return len(PACK_SECTORS)
+
+
+def extract_graph_keypad(source: Path, input_root: Path, output_root: Path) -> int:
+    """Extract the keypad, including its numeric and Japanese label buttons."""
+    data = source.read_bytes()
+    start = GRAPH_KEYPAD_OFFSET
+    end = start + GRAPH_KEYPAD_SIZE
+    if end > len(data):
+        raise DecodeError("GRAPH.NB5 keypad block at 0x00585E is outside the file")
+
+    relative = source.relative_to(input_root)
+    directory = output_root / relative
+    directory.mkdir(parents=True, exist_ok=True)
+    planar = data[start:end]
+    indices = decode_interleaved_planar(planar, GRAPH_KEYPAD_WIDTH, GRAPH_KEYPAD_HEIGHT, 3)
+    stem = f"{start:06x}"
+    (directory / f"{stem}.pln.jpn.bin").write_bytes(planar)
+    (directory / f"{stem}.idx.jpn.bin").write_bytes(indices)
+    save_png(directory / f"{stem}.jpn.png", indices, GRAPH_KEYPAD_WIDTH, GRAPH_KEYPAD_HEIGHT, GRAPH_KEYPAD_PALETTE_8)
+    metadata = {
+        "source": relative.as_posix(),
+        "offset": f"0x{start:06X}",
+        "original_size": GRAPH_KEYPAD_SIZE,
+        "encoded_size": None,
+        "stored_size": None,
+        "padding_byte": None,
+        "compression": "none",
+        "width": GRAPH_KEYPAD_WIDTH,
+        "height": GRAPH_KEYPAD_HEIGHT,
+        "planes": 3,
+        "plane_order": "BRG",
+        "planar_layout": "interleaved",
+        "bit_order": "msb-first",
+        "stride": GRAPH_KEYPAD_WIDTH // 8,
+        "palette": [f"#{red:02X}{green:02X}{blue:02X}" for red, green, blue in GRAPH_KEYPAD_PALETTE_8],
+        "palette_source": "workspace5 capture/main_002.raw1.png, rectangle (528,46,632,146)",
+        "unused_palette_indices": [4],
+        "unknown_palette_indices": [4],
+        "record_index": 0,
+        "header_size": 0,
+        "asm_reference": "MAIN.EXE sub_3AE30 copies 0x0F3C bytes from banked 0x1BE28 via sub_1482A; "
+        "sub_142EE draws 13 tiles by 100 pixels",
+    }
+    (directory / f"{stem}.meta.json").write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\r\n",
+    )
+    print(f"{relative}: 1 uncompressed 104x100 keypad image")
+    return 1
 
 
 def extract_portrait_archive(source: Path, input_root: Path, output_root: Path) -> int:
@@ -878,6 +942,11 @@ def main() -> int:
         raise SystemExit(f"missing source file: {nkao}")
     total += extract_nkao_archive(nkao, input_root, output_root)
     output_directories.append(output_root / nkao.name)
+    graph = input_root / "GRAPH.NB5"
+    if not graph.is_file():
+        raise SystemExit(f"missing source file: {graph}")
+    total += extract_graph_keypad(graph, input_root, output_root)
+    output_directories.append(output_root / graph.name)
     # slogo = input_root / "SLOGO.NB5"
     # if not slogo.is_file():
     #     raise SystemExit(f"missing source file: {slogo}")
