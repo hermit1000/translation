@@ -45,8 +45,6 @@ def plan_updates(paths, candidates, encode, words):
                 raise ValueError(f"translation too long: {path}:{entry['id']}")
             entry["translation"] = translation
             entry["translation_byte_length"] = len(raw)
-            entry.pop("wrap_space_indices", None)
-            entry.pop("wrap_text_sha256", None)
             changed.append(entry["id"])
         if changed:
             updates.append((path, document, changed))

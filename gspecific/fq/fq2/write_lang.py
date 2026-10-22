@@ -4,7 +4,6 @@ Usage: python -m gspecific.fq.fq2.write_lang [workspace]
 """
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -29,17 +28,12 @@ def encode_name(text, words):
     return b"".join(codes)
 
 
-def encode_dialogue(text, encode, drop_space_indices=None):
-    """Drop a space at a 36-byte printed dialogue line boundary."""
+def encode_dialogue(text, encode):
+    """Drop a space immediately after 36 or 37 printed bytes in a 37-byte line."""
     output = bytearray()
     column = 0
     index = 0
     while index < len(text):
-        if drop_space_indices is not None and index in drop_space_indices:
-            if text[index] != " ":
-                raise ValueError(f"wrap metadata points to a non-space at {index}")
-            index += 1
-            continue
         if text[index] == "\x01":
             output.append(1)
             column = 0
@@ -51,12 +45,12 @@ def encode_dialogue(text, encode, drop_space_indices=None):
             index += len(control.group())
             continue
         char = text[index]
-        if drop_space_indices is None and char == " " and column in (0, 1) and output:
+        if char == " " and column in (36, 37):
             column = 0
         else:
             raw = encode(char)
             output.extend(raw)
-            column = (column + len(raw)) % 36
+            column = len(raw) if column + len(raw) > 37 else column + len(raw)
         index += 1
     return bytes(output)
 
@@ -122,12 +116,7 @@ def patch_dialogue(workspace, disk_name, source, output, sectors, encode):
             raise ValueError(f"original dialogue differs: {path}:{number}")
         terminator = read_at(source, sectors, index_start + pointer + len(old_text), 1)
         translation = entry.get("translation")
-        drop_spaces = None
-        if translation and "wrap_space_indices" in entry:
-            translation_hash = hashlib.sha256(translation.encode("utf-8")).hexdigest()
-            if translation_hash == entry["wrap_text_sha256"]:
-                drop_spaces = set(entry["wrap_space_indices"])
-        raw = encode_dialogue(translation, encode, drop_spaces) if translation else old_text
+        raw = encode_dialogue(translation, encode) if translation else old_text
         if b"\0" in raw:
             raise ValueError(f"embedded NUL in dialogue: {path}:{number}")
         if terminator == b"\0":

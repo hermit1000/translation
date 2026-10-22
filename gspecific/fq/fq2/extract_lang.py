@@ -29,8 +29,6 @@ def extract(workspace):
                         raise ValueError(f"source text mismatch: {language}:{entry['id']}")
                 entry.pop("translation", None)
                 entry.pop("translation_byte_length", None)
-                entry.pop("wrap_space_indices", None)
-                entry.pop("wrap_text_sha256", None)
             target = output_dir / f"{block}_jpn.json"
             target.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n",
                               encoding="utf-8", newline="\r\n")
