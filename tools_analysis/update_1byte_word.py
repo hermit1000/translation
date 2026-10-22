@@ -80,7 +80,7 @@ def rewrite_script(script: dict, custom_words: dict[str, str]) -> tuple[dict, in
 
 
 def main() -> None:
-    ws_num = 0
+    ws_num = 5
     platform = "pc98"
     base_dir = Path(f"c:/work_han/workspace{ws_num}")
     if not base_dir.exists():

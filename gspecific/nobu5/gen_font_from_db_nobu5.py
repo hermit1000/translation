@@ -13,7 +13,7 @@ from typing import Optional, Sequence, Set
 import cv2
 from PIL import Image
 
-from module.font_image import add_text_pairs, set_2byte_merge, set_font
+from module.font_image import add_text_pairs, imread_korean, return_img_roi_1byte, set_2byte_merge, set_font
 from module.font_table import FontTable
 from module.name_db import NameDB
 
@@ -181,46 +181,115 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     letter_2byte.add("흐림")
 
     letter_2byte.add("_신")
+    letter_2byte.add("_차")
+    letter_2byte.add("간류")
+    letter_2byte.add("간스")
     letter_2byte.add("게_")
     letter_2byte.add("고미")
     letter_2byte.add("고요")
+    letter_2byte.add("교고")
     letter_2byte.add("구_")
+    letter_2byte.add("나스")
+    letter_2byte.add("뉴지")
     letter_2byte.add("다카")
     letter_2byte.add("리오")
     letter_2byte.add("리쿠")
     letter_2byte.add("리큐")
     letter_2byte.add("리키")
-    letter_2byte.add("마치")
+    letter_2byte.add("무로")
     letter_2byte.add("미미")
     letter_2byte.add("미카")
     letter_2byte.add("사부")
     letter_2byte.add("세토")
     letter_2byte.add("센노")
+    letter_2byte.add("소린")
     letter_2byte.add("소큐")
     letter_2byte.add("소탄")
+    letter_2byte.add("쇼소")
     letter_2byte.add("슈고")
     letter_2byte.add("스리")
+    letter_2byte.add("스오")
     letter_2byte.add("시라")
+    letter_2byte.add("신덴")
+    letter_2byte.add("아부")
     letter_2byte.add("와테")
+    letter_2byte.add("에몬")
+    letter_2byte.add("엔랴")
     letter_2byte.add("오케")
     letter_2byte.add("이인")
+    letter_2byte.add("이쥬")
     letter_2byte.add("제이")
+    letter_2byte.add("주고")
     letter_2byte.add("즈노")
+    letter_2byte.add("지요")
     letter_2byte.add("차야")
+    letter_2byte.add("차차")
     letter_2byte.add("츠케")
+    letter_2byte.add("코가")
+    letter_2byte.add("코부")
+    letter_2byte.add("코타")
     letter_2byte.add("쿠모")
     letter_2byte.add("쿠시")
     letter_2byte.add("키즈")
     letter_2byte.add("키쿠")
     letter_2byte.add("테이")
+    letter_2byte.add("텐큐")
     letter_2byte.add("하자")
+    letter_2byte.add("하즈")
+    letter_2byte.add("하츠")
+    letter_2byte.add("호코")
     letter_2byte.add("호쿠")
+    letter_2byte.add("혼마")
+
+    # Keep the space separate from two-byte pairs ending in "_".
+    input_cand_1byte = []
+    input_cand_1byte += ["|가", "|게", "|겐", "|고", "|구", "|기"]
+    input_cand_1byte += ["|나", "|네", "|노", "|니"]
+    input_cand_1byte += ["|다", "|도"]
+    input_cand_1byte += ["|라", "|레", "|로", "|루", "|리"]
+    input_cand_1byte += ["|마", "|만", "|메", "|모", "|미"]
+    input_cand_1byte += ["|바", "|반", "|베", "|보"]
+    input_cand_1byte += ["|사", "|세", "|소", "|시"]
+    input_cand_1byte += ["|아", "|야", "|에", "|오", "|우", "|와", "|이", "|인"]
+    input_cand_1byte += ["|자", "|조", "|죠", "|즈", "|지", "|츠", "|치"]
+    input_cand_1byte += ["|카", "|케", "|쿠", "|키", "|타", "|테", "|토"]
+    input_cand_1byte += ["|헤", "|호", "|후"]
+    input_cand_1byte.sort()
+    configured_1byte = set(input_cand_1byte)
+    if len(configured_1byte) != len(input_cand_1byte):
+        parser.error("Duplicate one-byte letters")
+    if len(input_cand_1byte) > 58:
+        parser.error(f"Too many one-byte letters: {len(input_cand_1byte)} (maximum 58)")
+
+    start_code_int = 0xA6
+    ret_code_dict = {letter: f"{start_code_int + i:02X}" for i, letter in enumerate(input_cand_1byte)}
+    for letter in input_cand_1byte:
+        font_path = args.base_dir / "byte1" / f"{letter[1:]}.bmp"
+        if not font_path.exists():
+            parser.error(f"Cannot read one-byte font: {font_path}")
+        roi = return_img_roi_1byte(ret_code_dict[letter])
+        src_font_canvas[roi[0] : roi[1], roi[2] : roi[3]] = imread_korean(font_path)
+
+    # Remove pairs that can be represented entirely with 1-byte fonts.
+    letter_1byte = {letter.removeprefix("|") for letter in input_cand_1byte}
+
+    def can_use_1byte(pair: str) -> bool:
+        if len(pair) != 2:
+            return False
+
+        first, second = pair
+        if first == "_":
+            return second in letter_1byte
+        if second == "_":
+            return first in letter_1byte
+        return first in letter_1byte and second in letter_1byte
+
+    letter_2byte = {pair for pair in letter_2byte if not can_use_1byte(pair)}
 
     print(len(letter_2byte))
     letter_2byte = sorted(letter_2byte)
 
     start_code = "9540"  # 鼻
-    ret_code_dict = dict()
     input_cand = []
     input_cand.append(["은", font_name])
     input_cand.append(["는", font_name])

@@ -10,12 +10,19 @@ from pathlib import Path
 from PIL import Image
 
 from gspecific.nobu5.decode_graphics import (
+    END_CALLIGRAPHY_COLUMNS,
+    END_CALLIGRAPHY_HEIGHT,
+    END_CALLIGRAPHY_OFFSET,
+    END_CALLIGRAPHY_RECORD_SIZE,
     GRAPH_KEYPAD_HEIGHT,
     GRAPH_KEYPAD_OFFSET,
     GRAPH_KEYPAD_PALETTE_8,
     GRAPH_KEYPAD_SIZE,
     GRAPH_KEYPAD_WIDTH,
     MAIN_PALETTE_00_8,
+    MAP_DIRECTION_RECORDS,
+    MAP_DIRECTION_TILE_POSITIONS,
+    MAP_PALETTE_8,
     PACK_SECTORS,
     SLOGO_OFFSETS,
     SOPEN_IMAGE_COUNT,
@@ -658,6 +665,59 @@ def encode_pack_archive(workspace: Path, *, all_artifacts: bool = False) -> int:
     return encoded_count
 
 
+def encode_map_directions(workspace: Path, *, all_artifacts: bool = False) -> int:
+    input_dir = workspace / "binary_inputs-pc98" / "M_CHIKEI.NB5"
+    source = None
+    entries = []
+    width, height = 33, 31
+    for name, _, start, _ in MAP_DIRECTION_RECORDS:
+        stem = f"{start:06x}"
+        png_path = input_dir / f"{stem}.kor.png"
+        if not png_path.is_file():
+            continue
+        if source is None:
+            source = bytearray((workspace / "jpn-pc98" / "M_CHIKEI.NB5").read_bytes())
+        end = start + 7 * 0x80
+        if end > len(source):
+            raise EncodeError(f"{png_path}: direction marker is outside M_CHIKEI.NB5")
+        indices = image_to_indices(png_path, width, height, MAP_PALETTE_8)
+        replacement = bytearray(source[start:end])
+        for index, (left, top) in enumerate(MAP_DIRECTION_TILE_POSITIONS):
+            tile_start = index * 0x80
+            pixels = bytearray(decode_interleaved_planar(
+                replacement[tile_start:tile_start + 0x60], 16, 16, 3))
+            for y in range(max(0, top), min(height, top + 16)):
+                for x in range(max(0, left), min(width, left + 16)):
+                    tile_x, tile_y = x - left, y - top
+                    mask = replacement[tile_start + 0x60 + tile_y * 2 + tile_x // 8]
+                    if mask & (0x80 >> (tile_x % 8)):
+                        raise EncodeError(f"{png_path}: unexpected transparent marker pixel")
+                    pixels[tile_y * 16 + tile_x] = indices[y * width + x]
+            # Preserve the mask and every tile pixel outside the joined PNG.
+            planar = encode_interleaved_planar(pixels, 16, 16, 3)
+            if decode_interleaved_planar(planar, 16, 16, 3) != pixels:
+                raise EncodeError(f"{png_path}: encoded tile {index} does not round-trip")
+            replacement[tile_start:tile_start + 0x60] = planar
+        replacement_path = input_dir / f"{stem}.kor.bin"
+        replacement_path.write_bytes(replacement)
+        source[start:end] = replacement
+        planar_path = input_dir / f"{stem}.pln.kor.bin"
+        indices_path = input_dir / f"{stem}.idx.kor.bin"
+        if all_artifacts:
+            planar_path.write_bytes(replacement)
+            indices_path.write_bytes(indices)
+        else:
+            planar_path.unlink(missing_ok=True)
+            indices_path.unlink(missing_ok=True)
+        entries.append({"start": start, "end": end,
+                        "replacement": replacement_path.name})
+        print(f"{png_path}: {name} marker, seven tiles, record={len(replacement)}")
+    if entries:
+        (input_dir / "M_CHIKEI.NB5").write_bytes(source)
+        write_binary_input_json(workspace, "M_CHIKEI.NB5", entries)
+    return len(entries)
+
+
 def encode_graph_keypad(workspace: Path, *, all_artifacts: bool = False) -> int:
     input_dir = workspace / "binary_inputs-pc98" / "GRAPH.NB5"
     stem = f"{GRAPH_KEYPAD_OFFSET:06x}"
@@ -938,6 +998,75 @@ def encode_sopen_archive(workspace: Path, *, all_artifacts: bool = False) -> int
     return encoded_count
 
 
+def encode_end_calligraphy(workspace: Path, *, all_artifacts: bool = False) -> int:
+    input_dir = workspace / "binary_inputs-pc98" / "END.DAT"
+    source_path = workspace / "jpn-pc98" / "END.DAT"
+    source = None
+    entries = []
+    json_entries = []
+    # Composite previews are not source records; encode the individual columns.
+    for index, (_, stride) in enumerate(END_CALLIGRAPHY_COLUMNS):
+        start = END_CALLIGRAPHY_OFFSET + index * END_CALLIGRAPHY_RECORD_SIZE
+        end = start + END_CALLIGRAPHY_RECORD_SIZE
+        stem = f"{start:06x}"
+        png_path = input_dir / f"{stem}.kor.png"
+        if not png_path.is_file():
+            continue
+        if source is None:
+            source = bytearray(source_path.read_bytes())
+        if end > len(source):
+            raise EncodeError(f"{png_path}: END calligraphy block is outside the file")
+        width, height = stride * 8, END_CALLIGRAPHY_HEIGHT
+        indices = image_to_indices(png_path, width, height, [(0, 0, 0), (255, 255, 255)])
+        planar = encode_interleaved_planar(indices, width, height, 1)
+        if decode_interleaved_planar(planar, width, height, 1) != indices:
+            raise EncodeError(f"{png_path}: encoded END pixels do not round-trip")
+        # Each slot is 0xA00 bytes; preserve bytes beyond the displayed bitmap.
+        replacement = planar + bytes(source[start + len(planar):end])
+        source[start:end] = replacement
+        replacement_path = input_dir / f"{stem}.kor.bin"
+        replacement_path.write_bytes(replacement)
+        files = {"png": png_path.name, "replacement": replacement_path.name}
+        planar_path = input_dir / f"{stem}.pln.kor.bin"
+        indices_path = input_dir / f"{stem}.idx.kor.bin"
+        if all_artifacts:
+            planar_path.write_bytes(replacement)
+            indices_path.write_bytes(indices)
+            files.update({"planar": planar_path.name, "pixels": indices_path.name})
+        else:
+            planar_path.unlink(missing_ok=True)
+            indices_path.unlink(missing_ok=True)
+        entries.append({
+            "offset": f"0x{start:06X}",
+            "record_index": index,
+            "width": width,
+            "height": height,
+            "original_size": END_CALLIGRAPHY_RECORD_SIZE,
+            "bitmap_size": len(planar),
+            "preserved_bytes": END_CALLIGRAPHY_RECORD_SIZE - len(planar),
+            "output_size": len(replacement),
+            "files": files,
+        })
+        json_entries.append({"start": start, "end": end,
+                             "replacement": replacement_path.name})
+        print(f"{png_path}: bitmap={len(planar)} record={len(replacement)}")
+    if entries:
+        output_path = input_dir / "END.DAT"
+        output_path.write_bytes(source)
+        write_binary_input_json(workspace, "END.DAT", json_entries)
+        report = {
+            "source": source_path.name,
+            "format": "Nobu5 END uncompressed 1bpp calligraphy replacement",
+            "output": output_path.name,
+            "output_mode": "fixed-record",
+            "entries": entries,
+        }
+        (input_dir / "encode_log.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8", newline="\r\n")
+    return len(entries)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -959,12 +1088,16 @@ def main() -> int:
     sopen_count = encode_sopen_archive(workspace, all_artifacts=args.all_artifacts)
     pack_count = encode_pack_archive(workspace, all_artifacts=args.all_artifacts)
     graph_count = encode_graph_keypad(workspace, all_artifacts=args.all_artifacts)
+    map_count = encode_map_directions(workspace, all_artifacts=args.all_artifacts)
     main_date_count = encode_main_date(workspace, all_artifacts=args.all_artifacts)
+    end_count = encode_end_calligraphy(workspace, all_artifacts=args.all_artifacts)
     print(f"encoded {slogo_count} SLOGO image(s)")
     print(f"encoded {sopen_count} SOPEN image(s)")
     print(f"encoded {pack_count} PACK image(s)")
     print(f"encoded {graph_count} GRAPH image(s)")
+    print(f"encoded {map_count} map direction image(s)")
     print(f"encoded {main_date_count} MAIN date image(s)")
+    print(f"encoded {end_count} END calligraphy image(s)")
     return 0
 
 

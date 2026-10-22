@@ -23,7 +23,38 @@ GRAPH_KEYPAD_OFFSET = 0x585E
 GRAPH_KEYPAD_SIZE = 0x0F3C
 GRAPH_KEYPAD_WIDTH = 104
 GRAPH_KEYPAD_HEIGHT = 100
+MAP_DIRECTION_RECORDS = (
+    ("east", "東", 0x7C20, (1879, 200)),
+    ("west", "西", 0x7FA0, (7, 240)),
+    ("south", "南", 0x8320, (935, 336)),
+    ("north", "北", 0x86A0, (935, 0)),
+)
+# Seven staggered 16x16 tiles form one opaque 33x31 direction marker.
+MAP_DIRECTION_TILE_POSITIONS = ((-7, 0), (-7, 16), (9, -8), (9, 8),
+                                (9, 24), (25, 0), (25, 16))
+MAP_PALETTE_8 = [
+    (0, 0, 0), (48, 101, 170), (207, 69, 0), (239, 207, 154),
+    (101, 138, 48), (186, 223, 239), (207, 170, 85), (239, 239, 255),
+]
 SOPEN_IMAGE_COUNT = 55
+END_SCREEN_OFFSETS = (
+    0x00000, 0x08E00, 0x1DA00, 0x1F200, 0x21800, 0x29000, 0x30800,
+    0x37E00, 0x3A000, 0x3AC00, 0x3C400, 0x3CC00, 0x3D400, 0x3D800,
+    0x3DA00, 0x3DC00, 0x43400, 0x44C00, 0x45200, 0x45800, 0x45E00,
+    0x46400, 0x46800, 0x46E00, 0x4FE00, 0x59400, 0x5AE00, 0x61200,
+    0x66400, 0x69400, 0x6EC00, 0x75600, 0x7C200, 0x81A00, 0x85C00,
+    0x89E00, 0x8B800, 0x8D200, 0x8EC00, 0x93000, 0x97400, 0x98000,
+    0x99000, 0x9A600, 0xA1600, 0xA5000, 0xA9A00, 0xAB600, 0xAC000,
+    0xAC600, 0xACA00, 0xADE00, 0xAE400, 0xAF400, 0xAF800, 0xB0A00,
+    0xB1000,
+)
+END_SPAN_BLOCKS = ((0x13600, 0x1A42), (0x64400, 0x475), (0x9D800, 0x94A))
+END_CALLIGRAPHY_OFFSET = 0xB2800
+END_CALLIGRAPHY_RECORD_SIZE = 0xA00
+END_CALLIGRAPHY_HEIGHT = 208
+# END.EXE DS:046A (file 0x14F4A): screen X and bitmap stride, both in bytes.
+END_CALLIGRAPHY_COLUMNS = ((67, 10), (59, 8), (52, 7), (42, 10), (35, 7),
+                           (28, 7), (19, 9), (10, 9), (2, 8))
 NKAO_IMAGE_COUNT = 3
 SLOGO_OFFSETS = (0x0000, 0x04E5, 0x07D6, 0x0C6D, 0x1232)
 PACK_SECTORS = (
@@ -346,6 +377,77 @@ def decode_nkao_image(data: bytes, start: int) -> tuple[int, int, bytes, bytes, 
     return width, height, planar, indices, position
 
 
+def decode_end_image(data: bytes, start: int) -> tuple[int, int, bytes, bytes, int]:
+    """Decode the three-plane END.EXE sub_110D8 image format."""
+    if start + 4 > len(data):
+        raise DecodeError("truncated END image header")
+    width = int.from_bytes(data[start : start + 2], "little")
+    height = int.from_bytes(data[start + 2 : start + 4], "little")
+    if not 1 <= width <= 640 or not 1 <= height <= 400 or width % 8:
+        raise DecodeError(f"unexpected END image dimensions {width}x{height}")
+    groups_per_row = (width + 3) // 4
+    groups: list[int] = []
+    position = start + 4
+    for row in range(height):
+        row_end = len(groups) + groups_per_row
+        while len(groups) < row_end:
+            if position >= len(data):
+                raise DecodeError("END compressed stream ended early")
+            control = data[position]
+            position += 1
+            if control & 0x80:
+                count = (control & 0x0F) + 1
+                distance = (((control >> 4) & 3) + 1) * groups_per_row if control & 0x40 else ((control >> 4) & 3) + 1
+                if len(groups) + count > row_end:
+                    raise DecodeError(f"END copy command crosses row {row}")
+                if distance > len(groups):
+                    raise DecodeError(f"END copy references unavailable data in row {row}")
+                for _ in range(count):
+                    groups.append(groups[-distance])
+            else:
+                count = ((control >> 4) & 7) + 1
+                if position >= len(data):
+                    raise DecodeError("truncated END literal")
+                pattern = (control & 0x0F) << 8 | data[position]
+                position += 1
+                if len(groups) + count > row_end:
+                    raise DecodeError(f"END literal command crosses row {row}")
+                groups.extend([pattern] * count)
+    planar = bytearray(width // 8 * height * 3)
+    for y in range(height):
+        for group_x in range(groups_per_row):
+            pattern = groups[y * groups_per_row + group_x]
+            for plane in range(3):
+                mask = (pattern >> (plane * 4)) & 0x0F
+                planar_offset = (y * (width // 8) + group_x // 2) * 3 + plane
+                planar[planar_offset] |= mask << (4 if group_x % 2 == 0 else 0)
+    indices = decode_interleaved_planar(bytes(planar), width, height, 3)
+    return width, height, bytes(planar), indices, position
+
+
+def decode_end_spans(data: bytes, start: int, count: int) -> bytes:
+    """Render END.EXE sub_1381A's column-indexed vertical spans at source size."""
+    import struct
+
+    table = struct.unpack_from("<640H", data, start)
+    output = bytearray(640 * 400)
+    records = start + 0x500
+    for x, first in enumerate(table):
+        if first == 0xFFFF:
+            continue
+        if first >= count:
+            raise DecodeError(f"END span index {first} exceeds block at 0x{start:X}")
+        for index in range(first, count):
+            marker, top, bottom = struct.unpack_from("<Hhh", data, records + index * 6)
+            if marker == 0xFFFF:
+                break
+            for y in range(max(0, top // 2), min(399, bottom // 2) + 1):
+                output[y * 640 + x] = 1
+        else:
+            raise DecodeError(f"unterminated END span column {x} at 0x{start:X}")
+    return bytes(output)
+
+
 def rotate_left(value: int, count: int, bits: int) -> int:
     mask = (1 << bits) - 1
     count %= bits
@@ -549,6 +651,128 @@ def extract_sopen_archive(source: Path, input_root: Path, output_root: Path) -> 
     return len(spans)
 
 
+def extract_end_calligraphy(data: bytes, relative: Path, directory: Path) -> int:
+    composite = Image.new("RGBA", (640, 400))
+    layers = []
+    for index, (screen_x, stride) in enumerate(END_CALLIGRAPHY_COLUMNS):
+        start = END_CALLIGRAPHY_OFFSET + index * END_CALLIGRAPHY_RECORD_SIZE
+        raw = data[start : start + END_CALLIGRAPHY_RECORD_SIZE]
+        if len(raw) != END_CALLIGRAPHY_RECORD_SIZE:
+            raise DecodeError(f"truncated END calligraphy block at 0x{start:X}")
+        width = stride * 8
+        mask = Image.frombytes("1", (width, END_CALLIGRAPHY_HEIGHT),
+                               raw[:stride * END_CALLIGRAPHY_HEIGHT]).convert("L")
+        is_stamp = index == 8
+        color = (204, 153, 0) if is_stamp else (255, 255, 255)
+        layer = Image.new("RGBA", mask.size, color)
+        layer.putalpha(mask)
+        stem = f"{start:06x}"
+        preview = Image.new("RGB", mask.size)
+        preview.paste(layer, (0, 0), mask)
+        preview.save(directory / f"{stem}.jpn.png")
+        (directory / f"{stem}.pln.jpn.bin").write_bytes(raw)
+        (directory / f"{stem}.idx.jpn.bin").write_bytes(
+            bytes(1 if value else 0 for value in mask.tobytes()))
+        composite.alpha_composite(layer, (screen_x * 8, 48))
+        metadata = {
+            "source": relative.as_posix(),
+            "offset": f"0x{start:06X}",
+            "original_size": len(raw),
+            "compression": "none",
+            "width": width,
+            "height": END_CALLIGRAPHY_HEIGHT,
+            "planes": 1,
+            "plane_order": "mask",
+            "planar_layout": "plane-major-row",
+            "bit_order": "msb-first",
+            "stride": stride,
+            "bitmap_size": stride * END_CALLIGRAPHY_HEIGHT,
+            "trailing_data": "unused bytes retained in pln file",
+            "screen_x": screen_x * 8,
+            "screen_y": 48,
+            "role": "stamp" if is_stamp else "vertical calligraphy",
+            "reveal_order": index,
+            "reveal_direction": "top to bottom; columns right to left",
+            "alpha": "opaque preview; black pixels represent transparent pixels in game",
+            "preview_color": "#CC9900" if is_stamp else "#FFFFFF",
+            "asm_reference": "END.EXE sub_163F8 (file 0x065F8)",
+        }
+        (directory / f"{stem}.meta.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        layers.append(stem)
+    composite.save(directory / "calligraphy.transparent.jpn.png")
+    preview = Image.new("RGB", composite.size)
+    preview.paste(composite, (0, 0), composite.getchannel("A"))
+    preview.save(directory / "calligraphy.jpn.png")
+    (directory / "calligraphy.meta.json").write_text(
+        json.dumps({"source": relative.as_posix(), "width": 640, "height": 400,
+                    "layers": layers, "alpha": "opaque black background",
+                    "transparent_image": "calligraphy.transparent.jpn.png"},
+                   ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return len(layers) + 2
+
+
+def extract_end_archive(source: Path, input_root: Path, output_root: Path) -> int:
+    data = source.read_bytes()
+    relative = source.relative_to(input_root)
+    directory = output_root / relative
+    directory.mkdir(parents=True, exist_ok=True)
+    for record_index, start in enumerate(END_SCREEN_OFFSETS):
+        width, height, planar, indices, stream_end = decode_end_image(data, start)
+        end = stream_end
+        stem = f"{start:06x}"
+        (directory / f"{stem}.cmp.jpn.bin").write_bytes(data[start:end])
+        (directory / f"{stem}.pln.jpn.bin").write_bytes(planar)
+        (directory / f"{stem}.idx.jpn.bin").write_bytes(indices)
+        save_png(directory / f"{stem}.jpn.png", indices, width, height, MAIN_PALETTE_00_8)
+        metadata = {
+            "source": relative.as_posix(),
+            "offset": f"0x{start:06X}",
+            "original_size": end - start,
+            "compression": "end-rle-lz-3plane",
+            "width": width,
+            "height": height,
+            "planes": 3,
+            "plane_order": "BRG",
+            "planar_layout": "interleaved",
+            "bit_order": "msb-first",
+            "stride": width // 8,
+            "palette": [f"#{r:02X}{g:02X}{b:02X}" for r, g, b in MAIN_PALETTE_00_8],
+            "palette_source": "preview palette from MAIN.EXE; END.EXE changes palette during playback",
+            "record_index": record_index,
+            "header_size": 4,
+            "compressed_stream_size": stream_end - start,
+            "asm_reference": "END.EXE sub_110D8",
+        }
+        (directory / f"{stem}.meta.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    for start, count in END_SPAN_BLOCKS:
+        indices = decode_end_spans(data, start, count)
+        stem = f"{start:06x}"
+        save_png(directory / f"{stem}.spans.jpn.png", indices, 640, 400,
+                 [(0, 0, 0), (255, 255, 255)])
+        metadata = {
+            "source": relative.as_posix(),
+            "offset": f"0x{start:06X}",
+            "original_size": 0x500 + count * 6,
+            "compression": "column-indexed vertical spans",
+            "width": 640,
+            "height": 400,
+            "palette": ["#000000", "#FFFFFF"],
+            "asm_reference": "END.EXE sub_1381A and sub_138C2",
+        }
+        (directory / f"{stem}.spans.meta.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    calligraphy_count = extract_end_calligraphy(data, relative, directory)
+    print(f"{relative}: {len(END_SCREEN_OFFSETS)} compressed images, "
+          f"{len(END_SPAN_BLOCKS)} span layers, and {calligraphy_count} calligraphy images")
+    return len(END_SCREEN_OFFSETS) + len(END_SPAN_BLOCKS) + calligraphy_count
+
+
 def extract_nkao_archive(source: Path, input_root: Path, output_root: Path) -> int:
     data = source.read_bytes()
     relative = source.relative_to(input_root)
@@ -714,6 +938,68 @@ def extract_pack_archive(source: Path, input_root: Path, output_root: Path) -> i
 
     print(f"{relative}: {len(PACK_SECTORS)} compressed GRPDRV images")
     return len(PACK_SECTORS)
+
+
+def extract_map_directions(source: Path, input_root: Path, output_root: Path) -> int:
+    """Join M_CHIKEI's masked tiles into the four map-edge direction markers."""
+    data = source.read_bytes()
+    relative = source.relative_to(input_root)
+    directory = output_root / relative
+    directory.mkdir(parents=True, exist_ok=True)
+    width, height = 33, 31
+    for name, japanese, start, map_position in MAP_DIRECTION_RECORDS:
+        raw = data[start:start + 7 * 0x80]
+        if len(raw) != 7 * 0x80:
+            raise DecodeError(f"truncated {name} direction marker at 0x{start:06X}")
+        indices = bytearray(width * height)
+        tiles = []
+        for index, (left, top) in enumerate(MAP_DIRECTION_TILE_POSITIONS):
+            record = raw[index * 0x80:(index + 1) * 0x80]
+            pixels = decode_interleaved_planar(record[:0x60], 16, 16, 3)
+            for y in range(max(0, top), min(height, top + 16)):
+                for x in range(max(0, left), min(width, left + 16)):
+                    tile_x, tile_y = x - left, y - top
+                    mask = record[0x60 + tile_y * 2 + tile_x // 8]
+                    if mask & (0x80 >> (tile_x % 8)):
+                        raise DecodeError(f"unexpected transparent pixel in {name} direction marker")
+                    indices[y * width + x] = pixels[tile_y * 16 + tile_x]
+            tiles.append({
+                "offset": f"0x{start + index * 0x80:06X}",
+                "position_in_png": [left, top],
+            })
+        stem = f"{start:06x}"
+        (directory / f"{stem}.pln.jpn.bin").write_bytes(raw)
+        (directory / f"{stem}.idx.jpn.bin").write_bytes(indices)
+        save_png(directory / f"{stem}.jpn.png", indices, width, height, MAP_PALETTE_8)
+        metadata = {
+            "source": relative.as_posix(),
+            "offset": f"0x{start:06X}",
+            "original_size": len(raw),
+            "compression": "none",
+            "width": width,
+            "height": height,
+            "planes": 3,
+            "plane_order": "BRG",
+            "planar_layout": "seven staggered tiles, each 96 planar bytes then 32 mask bytes",
+            "bit_order": "msb-first",
+            "palette_rgb": MAP_PALETTE_8,
+            "direction": name,
+            "japanese": japanese,
+            "map_position_pixels": list(map_position),
+            "tile_width": 16,
+            "tile_height": 16,
+            "tile_record_size": 0x80,
+            "tile_mask_offset": 0x60,
+            "tile_mask_bit_1": "preserve background",
+            "tiles": tiles,
+        }
+        (directory / f"{stem}.meta.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+            newline="\r\n",
+        )
+    print(f"{relative}: four 33x31 map direction markers")
+    return len(MAP_DIRECTION_RECORDS)
 
 
 def extract_graph_keypad(source: Path, input_root: Path, output_root: Path) -> int:
@@ -912,7 +1198,8 @@ def remove_intermediate_outputs(output_directories: list[Path]) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Extract image resources from jpn-pc98 into image-pc98.")
+    parser = argparse.ArgumentParser(
+        description="Extract image resources into image-pc98; END.DAT into binary_inputs-pc98.")
     parser.add_argument(
         "--workspace",
         type=Path,
@@ -929,6 +1216,7 @@ def main() -> int:
     workspace = args.workspace.resolve()
     input_root = workspace / "jpn-pc98"
     output_root = workspace / "image-pc98"
+    end_output_root = workspace / "binary_inputs-pc98"
 
     total = 0
     output_directories = []
@@ -937,6 +1225,11 @@ def main() -> int:
         raise SystemExit(f"missing source file: {sopen}")
     total += extract_sopen_archive(sopen, input_root, output_root)
     output_directories.append(output_root / sopen.name)
+    end = input_root / "END.DAT"
+    if not end.is_file():
+        raise SystemExit(f"missing source file: {end}")
+    total += extract_end_archive(end, input_root, end_output_root)
+    output_directories.append(end_output_root / end.name)
     nkao = input_root / "NKAO.NB5"
     if not nkao.is_file():
         raise SystemExit(f"missing source file: {nkao}")
@@ -947,6 +1240,11 @@ def main() -> int:
         raise SystemExit(f"missing source file: {graph}")
     total += extract_graph_keypad(graph, input_root, output_root)
     output_directories.append(output_root / graph.name)
+    map_graphics = input_root / "M_CHIKEI.NB5"
+    if not map_graphics.is_file():
+        raise SystemExit(f"missing source file: {map_graphics}")
+    total += extract_map_directions(map_graphics, input_root, output_root)
+    output_directories.append(output_root / map_graphics.name)
     # slogo = input_root / "SLOGO.NB5"
     # if not slogo.is_file():
     #     raise SystemExit(f"missing source file: {slogo}")
@@ -976,7 +1274,7 @@ def main() -> int:
     if not args.all_artifacts:
         removed = remove_intermediate_outputs(output_directories)
         print(f"removed {removed} intermediate binary files")
-    print(f"wrote {total} images below {output_root}")
+    print(f"wrote {total} images below {output_root} and {end_output_root / end.name}")
     return 0
 
 
