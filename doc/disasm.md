@@ -67,6 +67,26 @@ P
 
 진입점은 게임마다 다르다. unpack 결과 또는 DOSBox-X에서 확인한 `CS:EIP`를 사용한다.
 
+### IDA 7.7 headless 실행 사례: FQ3 MAIN.EXE
+
+이 환경에서는 `idat64.exe`가 Python DLL을 찾지 못해 IDAPython 플러그인 로드에 실패했다. `ida310`의 DLL 경로와 `PYTHONHOME`을 지정한 뒤 실행하면 스크립트가 동작했다.
+
+```powershell
+$idaDir = 'C:\Program Files (x86)\Hex-Rays IDA Professional Advanced Floating And Decompiler Full Activated'
+$pyDir = 'C:\Users\hyunx\miniconda3\envs\ida310'
+$env:PATH = "$pyDir;$pyDir\Library\bin;" + $env:PATH
+$env:PYTHONHOME = $pyDir
+& "$idaDir\idat64.exe" -A `
+  '-SC:\work_han\translation\gspecific\fq\fq3\ida_inspect_main.py' `
+  '-oC:\work_han\workspace13\analysis\fq3_main_probe.i64' `
+  '-LC:\work_han\workspace13\analysis\fq3_main_probe.log' `
+  'C:\work_han\workspace13\jpn-pc98\MAIN.EXE'
+```
+
+`-o`의 출력 경로에 이미 IDA 데이터베이스가 있으면 덮어쓰기 질문에 기본값 `No`를 택하고 종료한다. 재분석할 때는 새 출력 경로를 지정한다. 스크립트 종료에는 `idc.qexit(0)`을 사용한다. 이 버전의 `ida_idaapi`에는 `qexit`가 없다. 실제 분석 성공 여부는 프로세스 종료 코드만으로 판단하지 말고 `-L` 로그와 스크립트 출력 파일을 확인한다.
+
+FQ3 `MAIN.EXE`의 `END.BIN` 문자열은 파일 오프셋 `0xE7AE`, IDA 주소 `0x1E5AE`에 있으며 자동 분석상 직접 참조가 없다. 시작 코드가 프로그램 본체를 재배치하므로 디스크상의 정적 참조만으로 엔딩 호출 지점을 결정할 수 없다.
+
 ### DOSBox-X
 
 DOSBox-X는 실제 실행 중인 세그먼트, 스크립트·리소스 버퍼, 파일 로더를 확인하는 데 사용한다.
