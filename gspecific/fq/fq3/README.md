@@ -15,8 +15,8 @@ python -m gspecific.fq.fq3.build_ending_test
 ```
 
 The first command builds `fq3-BISCO.bmp` from the fixed custom word map,
-`C:\work_han\font_update_db\BISCO.bmp`, and the established custom glyph
-atlas `C:\work_han\font_update_db\fq3-ThinDungGeunMo.bmp`. `write_lang` reads
+`C:\work_han\font_update_db\BISCO.bmp`, and the 8×16 glyphs in
+`C:\work_han\font_update_db\byte1FQ3` (plus `byte2비스코/의.bmp`). `write_lang` reads
 the packed Japanese files in `jpn-pc98` and writes the Korean files to `kor-pc98` and
 `kor-pc98-dosbox-x`. The ending builder creates the direct-ending copy.
 

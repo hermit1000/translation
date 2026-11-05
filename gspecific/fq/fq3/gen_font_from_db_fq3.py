@@ -1,4 +1,4 @@
-"""Build FQ3's BISCO font from the fixed custom word map and glyph atlas."""
+"""Build FQ3's font from the BISCO atlas and FQ3 glyph database."""
 
 from __future__ import annotations
 
@@ -25,17 +25,33 @@ def build_font(workspace: Path, font_db: Path) -> Image.Image:
         raise ValueError("the fullwidth 의 glyph must remain at 9540")
     with Image.open(font_db / "BISCO.bmp") as source:
         canvas = source.convert("1")
-    with Image.open(font_db / "fq3-ThinDungGeunMo.bmp") as source:
-        custom = source.convert("1")
-    if canvas.size != (2048, 2048) or custom.size != canvas.size:
-        raise ValueError("font atlases must be 2048x2048")
+    if canvas.size != (2048, 2048):
+        raise ValueError("BISCO font atlas must be 2048x2048")
+    glyph_dir = font_db / "byte1FQ3"
     for word, code in words.items():
         if word.startswith("|"):
             continue  # One-byte Korean glyphs are stored in GDATA.CHR.
         if len(code) != 4:
             raise ValueError(f"invalid two-byte code for {word!r}: {code}")
         top, bottom, left, right = return_img_roi(code)
-        canvas.paste(custom.crop((left, top, right, bottom)), (left, top))
+        if len(word) == 1:
+            with Image.open(font_db / "byte2비스코" / f"{word}.bmp") as source:
+                glyph = source.convert("1")
+            if glyph.size != (16, 16):
+                raise ValueError(f"invalid full glyph size for {word!r}: {glyph.size}")
+        elif len(word) == 2:
+            glyph = Image.new("1", (16, 16), 255)
+            for index, character in enumerate(word):
+                if character == "_":
+                    continue
+                with Image.open(glyph_dir / f"{character}.bmp") as source:
+                    half = source.convert("1")
+                if half.size != (8, 16):
+                    raise ValueError(f"invalid half glyph size for {character!r}: {half.size}")
+                glyph.paste(half, (index * 8, 0))
+        else:
+            raise ValueError(f"invalid two-byte glyph: {word!r}")
+        canvas.paste(glyph, (left, top))
     return canvas
 
 
